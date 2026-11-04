@@ -8,7 +8,11 @@ const SHADER := preload("res://shaders/gun_skin.gdshader")
 ## Per weapon: display width (px in world), hand grip and fore-grip in texture pixels,
 ## muzzle Y in texture pixels. Textures are 512 px wide.
 const ART := {
-	"pistol": {"w": 40.0, "grip": Vector2(92, 150), "fore": Vector2(-1, -1), "muzzle_y": 55.0},
+	"pistol": {"w": 42.0, "grip": Vector2(82, 150), "fore": Vector2(-1, -1), "muzzle_y": 43.0},
+	"mp5": {"w": 62.0, "grip": Vector2(180, 105), "fore": Vector2(370, 52), "muzzle_y": 45.5},
+	"mp40": {"w": 66.0, "grip": Vector2(150, 82), "fore": Vector2(285, 100), "muzzle_y": 24.5},
+	"woodpecker": {"w": 92.0, "grip": Vector2(125, 100), "fore": Vector2(300, 57), "muzzle_y": 55.5},
+	"svd": {"w": 104.0, "grip": Vector2(112, 78), "fore": Vector2(285, 42), "muzzle_y": 49.0},
 	"smg": {"w": 54.0, "grip": Vector2(228, 128), "fore": Vector2(400, 60), "muzzle_y": 60.5},
 	"rifle": {"w": 84.0, "grip": Vector2(150, 88), "fore": Vector2(340, 66), "muzzle_y": 40.0},
 	"shotgun": {"w": 84.0, "grip": Vector2(128, 72), "fore": Vector2(360, 46), "muzzle_y": 18.0},

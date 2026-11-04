@@ -11,7 +11,7 @@ const SAVE_KEY := "MiniFire::v1::673eec6d1c4a09e814693a1654a36c82a2983d6b40cbea0
 
 var player_name: String = ""
 var color_index: int = 0
-var primary_weapon: String = "rifle"
+var primary_weapon: String = "smg"  # weapon shown in the shop first
 var mfc: int = 0
 var gems: int = 0
 var owned_skins: Array = ["default"]
@@ -24,6 +24,11 @@ var wins: int = 0
 var sfx_volume: float = 0.8
 var touch_controls: int = 0  # 0 auto, 1 always on, 2 off
 var last_join_ip: String = ""
+var char_skin: String = "trooper"
+var owned_chars: Array = ["trooper"]
+var bot_level: int = 1
+## Touch layout overrides: control id -> [x_frac, y_frac, scale]. Empty = defaults.
+var controls: Dictionary = {}
 
 
 func _ready() -> void:
@@ -81,6 +86,37 @@ func equip_skin(weapon_id: String, skin_id: String) -> void:
 func skin_for(weapon_id: String) -> String:
 	var s: String = equipped_skins.get(weapon_id, "default")
 	return s if owns_skin(s) else "default"
+
+
+# ---------------------------------------------------------------- character skins
+func owns_char(id: String) -> bool:
+	return id in owned_chars
+
+
+func buy_char(id: String) -> bool:
+	if owns_char(id):
+		return true
+	if not Catalog.CHAR_SKINS.has(id):
+		return false
+	var c: Dictionary = Catalog.CHAR_SKINS[id]
+	if not can_afford(c["currency"], int(c["price"])):
+		return false
+	if c["currency"] == "mfc":
+		mfc -= int(c["price"])
+	else:
+		gems -= int(c["price"])
+	owned_chars.append(id)
+	save_profile()
+	wallet_changed.emit()
+	profile_changed.emit()
+	return true
+
+
+func equip_char(id: String) -> void:
+	if owns_char(id):
+		char_skin = id
+		save_profile()
+		profile_changed.emit()
 
 
 # ---------------------------------------------------------------- powers
@@ -141,8 +177,8 @@ func lobby_info() -> Dictionary:
 	return {
 		"name": player_name.substr(0, 16),
 		"color": color_index,
-		"weapon": primary_weapon,
 		"skins": skins,
+		"char": char_skin if owns_char(char_skin) else "trooper",
 		"powers": powers.duplicate(),
 		"team": 0,
 		"bot": false,
@@ -154,7 +190,6 @@ func save_profile() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("p", "name", player_name)
 	cfg.set_value("p", "color", color_index)
-	cfg.set_value("p", "weapon", primary_weapon)
 	cfg.set_value("w", "mfc", mfc)
 	cfg.set_value("w", "gems", gems)
 	cfg.set_value("s", "owned", owned_skins)
@@ -167,6 +202,10 @@ func save_profile() -> void:
 	cfg.set_value("o", "sfx", sfx_volume)
 	cfg.set_value("o", "touch", touch_controls)
 	cfg.set_value("o", "ip", last_join_ip)
+	cfg.set_value("c", "skin", char_skin)
+	cfg.set_value("c", "owned", owned_chars)
+	cfg.set_value("o", "bots", bot_level)
+	cfg.set_value("o", "controls", controls)
 	var err := cfg.save_encrypted_pass(SAVE_PATH, SAVE_KEY)
 	if err != OK:
 		push_warning("Profile save failed: %s" % error_string(err))
@@ -181,9 +220,6 @@ func load_profile() -> void:
 		return
 	player_name = str(cfg.get_value("p", "name", ""))
 	color_index = clampi(int(cfg.get_value("p", "color", 0)), 0, Catalog.PLAYER_COLORS.size() - 1)
-	primary_weapon = str(cfg.get_value("p", "weapon", "rifle"))
-	if not primary_weapon in Catalog.PRIMARY_WEAPONS:
-		primary_weapon = "rifle"
 	mfc = maxi(0, int(cfg.get_value("w", "mfc", 0)))
 	gems = maxi(0, int(cfg.get_value("w", "gems", 0)))
 	var o = cfg.get_value("s", "owned", ["default"])
@@ -201,6 +237,16 @@ func load_profile() -> void:
 	sfx_volume = clampf(float(cfg.get_value("o", "sfx", 0.8)), 0.0, 1.0)
 	touch_controls = clampi(int(cfg.get_value("o", "touch", 0)), 0, 2)
 	last_join_ip = str(cfg.get_value("o", "ip", ""))
+	var oc = cfg.get_value("c", "owned", ["trooper"])
+	owned_chars = oc if oc is Array else ["trooper"]
+	if not "trooper" in owned_chars:
+		owned_chars.append("trooper")
+	char_skin = str(cfg.get_value("c", "skin", "trooper"))
+	if not owns_char(char_skin):
+		char_skin = "trooper"
+	bot_level = clampi(int(cfg.get_value("o", "bots", 1)), 0, Catalog.BOT_LEVELS.size() - 1)
+	var ct = cfg.get_value("o", "controls", {})
+	controls = ct if ct is Dictionary else {}
 
 
 func use_touch_controls() -> bool:

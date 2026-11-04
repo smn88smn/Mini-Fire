@@ -2,7 +2,7 @@ extends Node
 ## Static game data: weapons, gun skins, player colors, maps and reward rules.
 ## Everything that a designer may want to tune lives here.
 
-const GAME_VERSION := 2
+const GAME_VERSION := 3
 
 # ---------------------------------------------------------------- weapons
 # damage: per bullet/pellet. fire_delay: seconds between shots.
@@ -11,39 +11,90 @@ const GAME_VERSION := 2
 # splash: explosion radius (0 = none). auto: hold to fire.
 const WEAPONS := {
 	"pistol": {
-		"name": "Pistol", "damage": 18, "fire_delay": 0.32, "mag": 12, "reload": 1.1,
-		"speed": 1500.0, "life": 0.7, "spread": 0.03, "pellets": 1, "splash": 0.0,
-		"auto": false, "length": 26.0, "recoil": 30.0, "sound": "pistol"
+		"name": "Desert Eagle", "damage": 26, "fire_delay": 0.3, "mag": 8, "reload": 1.2,
+		"speed": 1700.0, "life": 0.62, "spread": 0.03, "pellets": 1, "splash": 0.0,
+		"auto": false, "length": 26.0, "recoil": 40.0, "sound": "pistol", "scopes": [1, 2], "dual": true, "tier": 1
 	},
 	"smg": {
-		"name": "Uzi", "damage": 11, "fire_delay": 0.075, "mag": 32, "reload": 1.5,
-		"speed": 1400.0, "life": 0.55, "spread": 0.09, "pellets": 1, "splash": 0.0,
-		"auto": true, "length": 34.0, "recoil": 18.0, "sound": "smg"
+		"name": "Uzi", "damage": 9, "fire_delay": 0.07, "mag": 32, "reload": 1.4,
+		"speed": 1400.0, "life": 0.5, "spread": 0.1, "pellets": 1, "splash": 0.0,
+		"auto": true, "length": 34.0, "recoil": 16.0, "sound": "smg", "scopes": [1, 2], "dual": true, "tier": 1
+	},
+	"mp5": {
+		"name": "MP5", "damage": 12, "fire_delay": 0.08, "mag": 30, "reload": 1.6,
+		"speed": 1600.0, "life": 0.6, "spread": 0.06, "pellets": 1, "splash": 0.0,
+		"auto": true, "length": 40.0, "recoil": 16.0, "sound": "smg", "scopes": [1, 2, 3], "dual": false, "tier": 2
+	},
+	"mp40": {
+		"name": "MP40", "damage": 14, "fire_delay": 0.1, "mag": 32, "reload": 1.8,
+		"speed": 1600.0, "life": 0.62, "spread": 0.07, "pellets": 1, "splash": 0.0,
+		"auto": true, "length": 42.0, "recoil": 20.0, "sound": "smg", "scopes": [1, 2, 3], "dual": false, "tier": 2
 	},
 	"rifle": {
-		"name": "AK-47", "damage": 16, "fire_delay": 0.11, "mag": 30, "reload": 1.8,
-		"speed": 1800.0, "life": 0.75, "spread": 0.045, "pellets": 1, "splash": 0.0,
-		"auto": true, "length": 46.0, "recoil": 28.0, "sound": "rifle"
+		"name": "AK-47", "damage": 17, "fire_delay": 0.11, "mag": 30, "reload": 1.9,
+		"speed": 1900.0, "life": 0.8, "spread": 0.045, "pellets": 1, "splash": 0.0,
+		"auto": true, "length": 46.0, "recoil": 28.0, "sound": "rifle", "scopes": [1, 2, 3, 4], "dual": false, "tier": 3
+	},
+	"woodpecker": {
+		"name": "Woodpecker", "damage": 42, "fire_delay": 0.4, "mag": 12, "reload": 2.2,
+		"speed": 2700.0, "life": 0.85, "spread": 0.008, "pellets": 1, "splash": 0.0,
+		"auto": false, "length": 56.0, "recoil": 60.0, "sound": "sniper", "scopes": [1, 2, 3, 5], "dual": false, "tier": 3
 	},
 	"shotgun": {
 		"name": "Shotgun", "damage": 12, "fire_delay": 0.75, "mag": 6, "reload": 2.2,
 		"speed": 1300.0, "life": 0.32, "spread": 0.22, "pellets": 7, "splash": 0.0,
-		"auto": false, "length": 42.0, "recoil": 90.0, "sound": "shotgun"
+		"auto": false, "length": 42.0, "recoil": 90.0, "sound": "shotgun", "scopes": [1, 2], "dual": false, "tier": 3
+	},
+	"svd": {
+		"name": "SVD", "damage": 62, "fire_delay": 0.6, "mag": 10, "reload": 2.4,
+		"speed": 3300.0, "life": 1.0, "spread": 0.004, "pellets": 1, "splash": 0.0,
+		"auto": false, "length": 60.0, "recoil": 90.0, "sound": "sniper", "scopes": [1, 2, 4, 7], "dual": false, "tier": 4
 	},
 	"sniper": {
-		"name": "Sniper", "damage": 85, "fire_delay": 1.25, "mag": 5, "reload": 2.5,
-		"speed": 3200.0, "life": 0.8, "spread": 0.0, "pellets": 1, "splash": 0.0,
-		"auto": false, "length": 58.0, "recoil": 120.0, "sound": "sniper"
+		"name": "Sniper", "damage": 95, "fire_delay": 1.25, "mag": 5, "reload": 2.5,
+		"speed": 3600.0, "life": 1.0, "spread": 0.0, "pellets": 1, "splash": 0.0,
+		"auto": false, "length": 58.0, "recoil": 120.0, "sound": "sniper", "scopes": [1, 2, 4, 7], "dual": false, "tier": 4
 	},
 	"rocket": {
-		"name": "Rocket", "damage": 70, "fire_delay": 1.4, "mag": 2, "reload": 2.8,
-		"speed": 750.0, "life": 2.0, "spread": 0.0, "pellets": 1, "splash": 120.0,
-		"auto": false, "length": 50.0, "recoil": 140.0, "sound": "rocket"
+		"name": "Rocket", "damage": 75, "fire_delay": 1.4, "mag": 2, "reload": 2.8,
+		"speed": 780.0, "life": 2.0, "spread": 0.0, "pellets": 1, "splash": 130.0,
+		"auto": false, "length": 50.0, "recoil": 140.0, "sound": "rocket", "scopes": [1, 2, 3], "dual": false, "tier": 5
 	},
 }
-## Order shown in menus. Pistol is always the secondary weapon.
-const PRIMARY_WEAPONS := ["rifle", "smg", "shotgun", "sniper", "rocket"]
+## Order shown in menus (shop list, etc.).
+const WEAPON_ORDER := ["pistol", "smg", "mp5", "mp40", "rifle", "woodpecker", "shotgun", "svd", "sniper", "rocket"]
+## Everyone spawns with these two guns (slot 0, slot 1). Better guns are found on the map
+## or dropped by killed players.
+const START_WEAPONS := ["smg", "pistol"]
+const PRIMARY_WEAPONS := WEAPON_ORDER  # kept for older code paths
 const SECONDARY_WEAPON := "pistol"
+const DUAL_FIRE_FACTOR := 0.55     # dual wield: fire delay multiplier
+const GROUND_GUN_LIFETIME := 30.0  # dropped guns vanish after this
+const GUN_SPOT_RESPAWN := 20.0     # map gun spots refill after this
+const PICK_RADIUS := 60.0
+
+# ---------------------------------------------------------------- bots
+# aim: random aim error (radians). react: think interval range. lead: target lead factor.
+# burst: chance to keep the trigger down each think. dmg: damage multiplier for bot shots.
+const BOT_LEVELS := [
+	{"name": "Easy", "aim": 0.3, "react": [0.75, 1.15], "lead": 0.0, "burst": 0.45, "dmg": 0.7, "dodge": 0.0, "loot": 0.2},
+	{"name": "Normal", "aim": 0.14, "react": [0.4, 0.7], "lead": 0.4, "burst": 0.75, "dmg": 0.9, "dodge": 0.25, "loot": 0.5},
+	{"name": "Hard", "aim": 0.06, "react": [0.22, 0.4], "lead": 0.8, "burst": 0.92, "dmg": 1.0, "dodge": 0.55, "loot": 0.8},
+	{"name": "Legend", "aim": 0.02, "react": [0.12, 0.22], "lead": 1.0, "burst": 1.0, "dmg": 1.1, "dodge": 0.85, "loot": 1.0},
+]
+
+# ---------------------------------------------------------------- character skins
+# head/body textures in assets/char (white parts are tinted with the player color).
+const CHAR_SKINS := {
+	"trooper": {"name": "Trooper", "currency": "mfc", "price": 0, "rarity": "common", "head": "head", "body": "body"},
+	"commando": {"name": "Commando", "currency": "mfc", "price": 800, "rarity": "rare", "head": "head_commando", "body": "body_commando"},
+	"pilot": {"name": "Ace Pilot", "currency": "mfc", "price": 1600, "rarity": "rare", "head": "head_pilot", "body": "body_pilot"},
+	"ninja": {"name": "Ninja", "currency": "gem", "price": 40, "rarity": "epic", "head": "head_ninja", "body": "body_ninja"},
+	"skull": {"name": "Reaper", "currency": "gem", "price": 70, "rarity": "epic", "head": "head_skull", "body": "body_skull"},
+	"cyborg": {"name": "Cyborg", "currency": "gem", "price": 120, "rarity": "legend", "head": "head_cyborg", "body": "body_cyborg"},
+	"legend": {"name": "Golden Knight", "currency": "gem", "price": 250, "rarity": "legend", "head": "head_legend", "body": "body_legend"},
+}
+const CHAR_ORDER := ["trooper", "commando", "pilot", "ninja", "skull", "cyborg", "legend"]
 
 # ---------------------------------------------------------------- skins
 # currency: "mfc" (soft coin) or "gem". price 0 = free/default.
@@ -135,8 +186,11 @@ const GEM_PACKS := [
 ]
 
 # ---------------------------------------------------------------- maps
-# Each map: size, list of solid rects [x, y, w, h], spawn points per team.
-const MAPS := [
+# Each map: size, list of solid rects [x, y, w, h, style?], spawn points per team.
+# Optional keys (see _warzone): ground (terrain top profile), rooms (interior backgrounds),
+# beams (decorative supports), props, guns (weapon spots), pickups.
+var MAPS: Array = []
+const CLASSIC_MAPS := [
 	{
 		"name": "Outpost",
 		"size": Vector2(3200, 1800),
@@ -185,8 +239,113 @@ const MAPS := [
 ]
 
 
+func _init() -> void:
+	MAPS = [_warzone()] + CLASSIC_MAPS
+
+
+## Big symmetric map: rolling hills, a 3-floor HQ per team, bunkers, watchtowers,
+## a 2-floor central fort and high catwalks. Built from the left half and mirrored.
+func _warzone() -> Dictionary:
+	var W := 6400.0
+	var rects: Array = []
+	var rooms: Array = []
+	var beams: Array = []
+	var props: Array = []
+	var guns: Array = []
+	var pickups: Array = []
+	# ---- terrain top profile (left half), mirrored later
+	var ground_l := [Vector2(0, 2000), Vector2(1050, 2000), Vector2(1180, 2040), Vector2(1300, 2110),
+		Vector2(1420, 2150), Vector2(2150, 2150), Vector2(2250, 2080), Vector2(2330, 2000),
+		Vector2(2400, 1960), Vector2(2540, 1960), Vector2(2640, 2010), Vector2(2770, 2050), Vector2(3200, 2050)]
+	# ---- HQ (x 0..1000, ground 2000): floors 1740 / 1480, roof 1220, stair holes alternate
+	rooms.append([0, 1220, 1000, 780])
+	rects.append_array([[0, 1740, 700, 40, "concrete"], [840, 1740, 160, 40, "concrete"],
+		[0, 1480, 160, 40, "concrete"], [300, 1480, 700, 40, "concrete"],
+		[0, 1220, 700, 40, "concrete"], [840, 1220, 160, 40, "concrete"],
+		[960, 1780, 40, 70, "concrete"], [960, 1520, 40, 70, "concrete"], [960, 1260, 40, 70, "concrete"],
+		[960, 1160, 40, 60, "concrete"], [0, 1160, 40, 60, "concrete"],
+		[480, 1950, 54, 50, "crate"], [220, 1690, 54, 50, "crate"], [560, 1430, 54, 50, "crate"], [534, 1964, 36, 36, "crate"]])
+	props.append_array([[120, 2000, 3, 1.0], [700, 2000, 1, 0.8], [880, 1740, 3, 0.9], [400, 1480, 1, 0.8],
+		[250, 1220, 5, 0.9], [900, 1220, 4, 1.0]])
+	# ---- bunker (x 1500..2100 on ground 2150)
+	rooms.append([1500, 2000, 600, 150])
+	rects.append_array([[1480, 1960, 640, 40, "concrete"], [1540, 1915, 110, 45, "sandbag"], [1950, 1915, 110, 45, "sandbag"]])
+	beams.append_array([[1530, 2000, 24, 150], [2066, 2000, 24, 150]])
+	props.append_array([[1300, 2110, 4, 1.0], [1700, 2150, 1, 0.75], [2200, 2115, 2, 0.9]])
+	# ---- watchtower on the hill
+	rects.append_array([[2340, 1700, 220, 30, "metal"], [2340, 1440, 220, 30, "metal"], [2300, 1180, 300, 30, "metal"],
+		[2300, 1140, 20, 40, "metal"], [2580, 1140, 20, 40, "metal"]])
+	beams.append_array([[2356, 1210, 18, 760], [2526, 1210, 18, 760]])
+	# ---- catwalks high in the sky
+	rects.append_array([[1150, 1100, 450, 30, "metal"], [1750, 850, 420, 30, "metal"], [2700, 1300, 260, 30, "metal"]])
+	beams.append_array([[1360, 1130, 14, 340], [1955, 880, 14, 260]])
+	# ---- central fort (x 2850..3550, ground 2050), mirrored onto itself
+	rooms.append([2850, 1530, 700, 520])
+	rects.append_array([[2850, 1790, 280, 40, "concrete"], [3270, 1790, 280, 40, "concrete"],
+		[2850, 1530, 700, 40, "concrete"],
+		[2850, 1830, 40, 70, "concrete"], [3510, 1830, 40, 70, "concrete"],
+		[2850, 1570, 40, 70, "concrete"], [3510, 1570, 40, 70, "concrete"],
+		[2850, 1470, 40, 60, "concrete"], [3510, 1470, 40, 60, "concrete"],
+		[3050, 1200, 300, 30, "metal"], [3175, 2000, 50, 50, "crate"]])
+	beams.append_array([[3192, 1230, 16, 300]])
+	props.append_array([[2960, 1790, 3, 0.9], [3200, 1530, 5, 1.0], [2780, 2050, 2, 0.9]])
+	# ---- weapons and pickups (left half; mirrored)
+	guns.append_array([[850, 1714, "mp5"], [400, 1194, "woodpecker"], [1800, 2124, "shotgun"],
+		[2450, 1154, "svd"], [1960, 824, "mp40"], [3020, 2024, "rifle"], [1370, 1074, "rifle"]])
+	pickups.append_array([[780, 1976, "medkit"], [800, 1456, "ammo"], [1650, 1936, "medkit"], [2450, 1676, "ammo"],
+		[3000, 1766, "medkit"], [2830, 1276, "ammo"]])
+	var center_guns := [[3200, 1504, "rocket"], [3200, 1174, "sniper"]]
+	# ---- mirror everything onto the right half
+	var ground: Array = ground_l.duplicate()
+	for i in range(ground_l.size() - 2, -1, -1):
+		ground.append(Vector2(W - ground_l[i].x, ground_l[i].y))
+	var mirror_rect := func(r: Array) -> Array:
+		var o := r.duplicate()
+		o[0] = W - float(r[0]) - float(r[2])
+		return o
+	for list in [rects, rooms, beams]:
+		var extra: Array = []
+		for r in list:
+			var m: Array = mirror_rect.call(r)
+			if absf(float(m[0]) - float(r[0])) > 1.0:
+				extra.append(m)
+		list.append_array(extra)
+	for list in [props, guns, pickups]:
+		var extra: Array = []
+		for it in list:
+			var o: Array = it.duplicate()
+			o[0] = W - float(it[0])
+			if absf(float(o[0]) - float(it[0])) > 1.0:
+				extra.append(o)
+		list.append_array(extra)
+	guns.append_array(center_guns)
+	var sp_l := [Vector2(300, 1950), Vector2(650, 1950), Vector2(450, 1690), Vector2(800, 1430), Vector2(450, 1170), Vector2(1200, 1990)]
+	var sp_r: Array = []
+	for v in sp_l:
+		sp_r.append(Vector2(W - v.x, v.y))
+	return {
+		"name": "Warzone",
+		"size": Vector2(W, 2300),
+		"bg": Color("141a2e"),
+		"solid": Color("4a5468"),
+		"bg_image": "warzone", "tex": "metal", "tex_tint": Color(1, 1, 1), "lip": Color("ffc83a"), "edge": Color("0b0f1a"),
+		"ground_tex": "dirt", "ground_tint": Color(1, 1, 1),
+		"rects": rects, "rooms": rooms, "beams": beams, "props": props,
+		"ground": ground, "guns": guns, "pickups": pickups,
+		"spawns": [sp_l, sp_r],
+	}
+
+
 func weapon(id: String) -> Dictionary:
 	return WEAPONS.get(id, WEAPONS["pistol"])
+
+
+func char_skin(id: String) -> Dictionary:
+	return CHAR_SKINS.get(id, CHAR_SKINS["trooper"])
+
+
+func bot_level(i: int) -> Dictionary:
+	return BOT_LEVELS[clampi(i, 0, BOT_LEVELS.size() - 1)]
 
 
 func skin(id: String) -> Dictionary:

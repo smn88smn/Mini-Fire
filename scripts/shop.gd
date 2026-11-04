@@ -1,6 +1,6 @@
 class_name ShopPanel
 extends Control
-## Shop: gun skins, powers (permanent upgrades) and gems.
+## Shop: gun skins, character skins (heroes), powers (permanent upgrades) and gems.
 ## Skins/powers cost MFC (earned by playing) or Gems (earned by playing in v1,
 ## watched ads, or bought with real money once the billing plugin is wired).
 ## Lists scroll by dragging with a finger (UIKit.DragScroll).
@@ -9,7 +9,7 @@ signal closed
 
 var start_tab := "skins"
 var _tab := "skins"
-var _weapon := "rifle"
+var _weapon := "smg"
 var _tab_row: HBoxContainer
 var _body: Control
 
@@ -39,7 +39,7 @@ func _ready() -> void:
 	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(_body)
 	_tab = start_tab
-	_weapon = Profile.primary_weapon
+	_weapon = Profile.primary_weapon if Profile.primary_weapon in Catalog.WEAPON_ORDER else "smg"
 	Profile.profile_changed.connect(_refresh)
 	Monetization.reward_granted.connect(_on_reward)
 	Monetization.purchase_completed.connect(_on_purchase)
@@ -70,7 +70,7 @@ func _refresh() -> void:
 	if not is_inside_tree():
 		return
 	UIKit.clear(_tab_row)
-	for pair in [["skins", "SKINS", "orange"], ["powers", "POWERS", "purple"], ["gems", "GEMS", "blue"]]:
+	for pair in [["skins", "SKINS", "orange"], ["chars", "HEROES", "green"], ["powers", "POWERS", "purple"], ["gems", "GEMS", "blue"]]:
 		var id: String = pair[0]
 		var b := UIKit.glass_button(pair[1], pair[2] if id == _tab else "dark", func():
 			_tab = id
@@ -82,6 +82,8 @@ func _refresh() -> void:
 			_body.add_child(_powers_page())
 		"gems":
 			_body.add_child(_gems_page())
+		"chars":
+			_body.add_child(_chars_page())
 		_:
 			_body.add_child(_skins_page())
 
@@ -102,7 +104,7 @@ func _skins_page() -> Control:
 	wl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	wl.add_theme_constant_override("separation", 8)
 	ws.add_child(wl)
-	for w in Catalog.PRIMARY_WEAPONS + [Catalog.SECONDARY_WEAPON]:
+	for w in Catalog.WEAPON_ORDER:
 		var wid: String = w
 		var b := UIKit.glass_button("", "orange" if wid == _weapon else "dark", func():
 			_weapon = wid
@@ -192,6 +194,71 @@ func _buy(sid: String) -> void:
 func _equip(sid: String) -> void:
 	Profile.equip_skin(_weapon, sid)
 	_sync_lobby()
+
+
+# ================================================================ heroes (character skins)
+func _chars_page() -> Control:
+	var scroll := UIKit.DragScroll.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	scroll.add_child(grid)
+	for cid in Catalog.CHAR_ORDER:
+		grid.add_child(_char_card(cid))
+	return scroll
+
+
+func _char_card(cid: String) -> Control:
+	var c: Dictionary = Catalog.char_skin(cid)
+	var rarity := str(c.get("rarity", "common"))
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UIKit.card_style(rarity))
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.custom_minimum_size = Vector2(0, 280)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	card.add_child(v)
+	v.add_child(UIKit.label(rarity.to_upper(), 14, Catalog.RARITY_COLORS.get(rarity, UIKit.MUTED)))
+	var prev := Widgets.CharacterPreview.new()
+	prev.custom_minimum_size = Vector2(0, 140)
+	prev.color = Catalog.color_by_index(Profile.color_index)
+	prev.char_id = cid
+	prev.weapon_id = "smg"
+	prev.skin_id = Profile.skin_for("smg")
+	v.add_child(prev)
+	v.add_child(UIKit.label(str(c["name"]), 22, UIKit.TEXT, HORIZONTAL_ALIGNMENT_CENTER))
+	if cid == Profile.char_skin:
+		var b := UIKit.glass_button("EQUIPPED", "green", func(): pass, Vector2(0, 56), 20)
+		b.disabled = true
+		b.add_theme_stylebox_override("disabled", UIKit.glass("green", true))
+		v.add_child(b)
+	elif Profile.owns_char(cid):
+		v.add_child(UIKit.glass_button("EQUIP", "blue", func():
+			Profile.equip_char(cid)
+			_sync_lobby(), Vector2(0, 56), 20))
+	else:
+		var gem := str(c["currency"]) == "gem"
+		var b := UIKit.glass_button("  %d" % int(c["price"]), "purple" if gem else "orange", func(): _buy_char(cid), Vector2(0, 56), 22)
+		b.icon = UIKit.icon_tex("gem" if gem else "coin")
+		b.expand_icon = true
+		b.add_theme_constant_override("icon_max_width", 26)
+		if not Profile.can_afford(c["currency"], int(c["price"])):
+			b.modulate = Color(1, 1, 1, 0.6)
+		v.add_child(b)
+	return card
+
+
+func _buy_char(cid: String) -> void:
+	if Profile.buy_char(cid):
+		Profile.equip_char(cid)
+		Sfx.play("buy", 0.8, 0.0)
+		UIKit.toast(self, "Unlocked %s" % Catalog.char_skin(cid)["name"], UIKit.GOOD)
+		_sync_lobby()
+	else:
+		UIKit.toast(self, "Not enough currency", UIKit.BAD)
 
 
 # ================================================================ powers
@@ -318,7 +385,7 @@ func _gem_card(tag: String, amount: String, action: String, color: String, cb: C
 func _sync_lobby() -> void:
 	if Network.is_active() and not Network.in_match:
 		var li := Profile.lobby_info()
-		Network.update_my_info({"skins": li["skins"], "powers": li.get("powers", {})})
+		Network.update_my_info({"skins": li["skins"], "powers": li.get("powers", {}), "char": li["char"]})
 
 
 func _on_reward(g: int) -> void:

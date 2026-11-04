@@ -7,10 +7,10 @@ config_version=5
 
 config/name="Mini Fire"
 config/description="2D LAN multiplayer jetpack shooter"
-config/version="2.0.0"
+config/version="3.0.0"
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.4", "GL Compatibility")
-config/icon="res://icon.svg"
+config/icon="res://icon.png"
 
 [autoload]
 

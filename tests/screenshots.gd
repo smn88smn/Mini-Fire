@@ -31,6 +31,15 @@ func _run() -> void:
 	menu._show_settings()
 	await _wait(0.3)
 	await _shot("03_settings")
+	var ed := ControlsEditor.new()
+	menu.add_child(ed)
+	await _wait(0.4)
+	ed._touch.selected = "rstick"
+	ed._on_select("rstick")
+	ed._touch.queue_redraw()
+	await _wait(0.2)
+	await _shot("03b_controls_editor")
+	ed.queue_free()
 	menu._show_home()
 	menu._open_shop()
 	await _wait(0.5)
@@ -56,6 +65,10 @@ func _run() -> void:
 	shop._refresh()
 	await _wait(0.3)
 	await _shot("04d_gems")
+	shop._tab = "chars"
+	shop._refresh()
+	await _wait(0.3)
+	await _shot("04e_heroes")
 	shop._close()
 	await _wait(0.3)
 	Network.host_practice()
@@ -79,6 +92,14 @@ func _run() -> void:
 	g.hud.touch.visible = false
 	await _wait(3.0)
 	await _shot("09_game_pc")
+	var lp = g.local_player()
+	if lp:
+		lp.set_loadout(["svd", "smg"], [false, true], 0, 0)
+		await _wait(0.2)
+		for i in 3:
+			g.cycle_scope()
+	await _wait(1.0)
+	await _shot("09b_scope")
 	g.time_left = 0.0
 	await _wait(1.0)
 	await _shot("10_results")

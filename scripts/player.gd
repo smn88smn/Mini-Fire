@@ -11,9 +11,9 @@ const AIR_ACCEL := 1500.0
 const JET_ACCEL := 3000.0
 const JET_MAX_UP := -560.0
 const MAX_FALL := 1000.0
-const FUEL_DRAIN := 0.42
-const FUEL_REGEN_GROUND := 0.45
-const FUEL_REGEN_AIR := 0.1
+const FUEL_DRAIN := 0.2		# ~5 s of full thrust
+const FUEL_REGEN_GROUND := 0.5
+const FUEL_REGEN_AIR := 0.08
 const NET_RATE := 1.0 / 30.0
 const BODY_RADIUS := 14.0
 const BODY_HEIGHT := 52.0
@@ -34,9 +34,11 @@ var alive := true
 var fuel := 1.0
 var jet_on := false
 var aim_angle := 0.0
-var slot := 0  # 0 primary, 1 pistol
+var slot := 0  # 0 primary, 1 secondary
 var weapons: Array = []
+var dual: Array = [false, false]  # dual wield per slot (Uzi / Desert Eagle)
 var ammo: Array = [0, 0]
+var _dual_side := 0
 var reloading := 0.0
 var cooldown := 0.0
 var protect := 0.0  # spawn protection (visual on clients, enforced on host)
@@ -66,6 +68,10 @@ var _ai_detour := 0.0        # >0 while taking a detour
 var _ai_detour_dir := 1.0
 var _ai_last_pos := Vector2.ZERO
 var _ai_stuck_t := 0.0
+var _ai_trigger := true
+var _ai_loot_t := 0.0
+var _ai_loot: Vector2 = Vector2.ZERO
+var _lvl: Dictionary = {}
 
 
 func setup(id: int, p_info: Dictionary, p_game: Node) -> void:
@@ -75,11 +81,13 @@ func setup(id: int, p_info: Dictionary, p_game: Node) -> void:
 	is_bot = bool(info.get("bot", false))
 	team = int(info.get("team", 0))
 	body_color = Catalog.color_by_index(int(info.get("color", 0)))
-	weapons = [str(info.get("weapon", "rifle")), Catalog.SECONDARY_WEAPON]
+	weapons = Catalog.START_WEAPONS.duplicate()
+	dual = [false, false]
 	max_hp = Catalog.max_health_for(info)
 	hp = max_hp
 	fuel_mult = Catalog.fuel_factor_for(info)
-	ammo = [mag_of(weapons[0]), mag_of(weapons[1])]
+	ammo = [mag_slot(0), mag_slot(1)]
+	_lvl = Catalog.bot_level(int(Network.settings.get("bots", 1)))
 	name = ("B%d" % absi(id)) if id < 0 else ("P%d" % id)
 	set_multiplayer_authority(1 if is_bot else id)
 	collision_layer = 2
@@ -122,12 +130,43 @@ func mag_of(weapon_id: String) -> int:
 	return Catalog.mag_for(info, weapon_id)
 
 
+## Magazine size of a slot (doubled when dual wielding).
+func mag_slot(i: int) -> int:
+	return mag_of(weapons[i]) * (2 if dual[i] else 1)
+
+
+func is_dual() -> bool:
+	return bool(dual[slot])
+
+
+## Host -> everyone: new guns after a pickup. refill = slot whose magazine is refilled (-1 none).
+func set_loadout(w: Array, d: Array, refill: int, new_slot: int) -> void:
+	var before := current_weapon()
+	weapons = w.duplicate()
+	dual = d.duplicate()
+	if new_slot == 0 or new_slot == 1:
+		slot = new_slot
+	if refill == 0 or refill == 1:
+		ammo[refill] = mag_slot(refill)
+		if refill == slot:
+			reloading = 0.0
+	for i in 2:
+		ammo[i] = mini(int(ammo[i]), mag_slot(i))
+	if current_weapon() != before:
+		cooldown = maxf(cooldown, 0.2)
+		reloading = 0.0
+	if is_local_human():
+		Sfx.play("reload", 0.6)
+
+
 func reload_of(weapon_id: String) -> float:
 	return Catalog.reload_for(info, weapon_id)
 
 
 func muzzle_global() -> Vector2:
 	var m := GunArt.muzzle_offset(current_weapon())
+	if is_dual() and _dual_side == 1:
+		m += DUAL_OFFSET
 	var from := global_position + SHOULDER
 	var to := from + m.rotated(aim_angle)
 	if not is_inside_tree():
@@ -182,7 +221,7 @@ func _simulate(delta: float) -> void:
 		reloading -= delta
 		if reloading <= 0.0:
 			reloading = 0.0
-			ammo[slot] = mag_of(current_weapon())
+			ammo[slot] = mag_slot(slot)
 	# aim
 	if in_aim.length_squared() > 0.0001:
 		aim_angle = in_aim.angle()
@@ -214,7 +253,8 @@ func try_fire() -> void:
 		return
 	var w := weapon_data()
 	ammo[slot] -= 1
-	cooldown = float(w["fire_delay"])
+	cooldown = float(w["fire_delay"]) * (Catalog.DUAL_FIRE_FACTOR if is_dual() else 1.0)
+	_dual_side = (1 - _dual_side) if is_dual() else 0
 	# small recoil push
 	velocity -= Vector2.from_angle(aim_angle) * float(w["recoil"])
 	if game:
@@ -226,8 +266,7 @@ func try_fire() -> void:
 func start_reload() -> void:
 	if reloading > 0.0 or not alive:
 		return
-	var w := weapon_data()
-	if ammo[slot] >= mag_of(current_weapon()):
+	if ammo[slot] >= mag_slot(slot):
 		return
 	reloading = reload_of(current_weapon())
 	if is_local_human():
@@ -256,7 +295,9 @@ func do_respawn(pos: Vector2) -> void:
 	reloading = 0.0
 	cooldown = 0.3
 	protect = 1.5
-	ammo = [mag_of(weapons[0]), mag_of(weapons[1])]
+	weapons = Catalog.START_WEAPONS.duplicate()
+	dual = [false, false]
+	ammo = [mag_slot(0), mag_slot(1)]
 	visible = true
 	collision_layer = 2
 	_ai_target = null
@@ -312,10 +353,18 @@ func _bot_think(delta: float) -> void:
 		return
 	_ai_think -= delta
 	if _ai_think <= 0.0:
-		_ai_think = randf_range(0.3, 0.6)
+		var react: Array = _lvl.get("react", [0.3, 0.6])
+		_ai_think = randf_range(float(react[0]), float(react[1]))
 		_ai_target = _find_target()
 		_ai_strafe = randf_range(-1.0, 1.0)
-		_ai_aim_err = randf_range(-0.12, 0.12)
+		var ae := float(_lvl.get("aim", 0.12))
+		_ai_aim_err = randf_range(-ae, ae)
+		_ai_trigger = randf() < float(_lvl.get("burst", 0.8))
+		# loot: walk to a better gun lying around
+		_ai_loot = Vector2.ZERO
+		if randf() < float(_lvl.get("loot", 0.5)):
+			var near_d := 900.0 if _ai_target == null else 380.0
+			_ai_loot = game.bot_loot_target(self, near_d)
 		if _ai_target == null and (_ai_wander == Vector2.ZERO or global_position.distance_to(_ai_wander) < 80.0):
 			var size: Vector2 = game.map_size()
 			_ai_wander = Vector2(randf_range(200, size.x - 200), randf_range(200, size.y - 300))
@@ -326,6 +375,11 @@ func _bot_think(delta: float) -> void:
 		goal = _ai_target.global_position
 		dist = global_position.distance_to(goal)
 		los = _has_los(_ai_target.global_position + Vector2(0, -6))
+	if _ai_loot != Vector2.ZERO:
+		goal = _ai_loot
+		if global_position.distance_to(_ai_loot) < Catalog.PICK_RADIUS * 0.8:
+			game.bot_try_pick(self)
+			_ai_loot = Vector2.ZERO
 	var to_goal := goal - global_position
 	# stuck detection: barely moved for a while -> take a sideways detour
 	_ai_stuck_t += delta
@@ -341,8 +395,11 @@ func _bot_think(delta: float) -> void:
 	_ai_detour = maxf(0.0, _ai_detour - delta)
 	# movement: approach when far or blocked, strafe when fighting
 	var ideal := 420.0 if current_weapon() != "shotgun" else 160.0
-	if current_weapon() == "sniper":
+	if current_weapon() in ["sniper", "svd", "woodpecker"]:
 		ideal = 800.0
+	elif current_weapon() in ["smg", "mp5", "mp40", "pistol"]:
+		ideal = 300.0
+	var dodge := float(_lvl.get("dodge", 0.3))
 	if _ai_detour > 0.0:
 		in_move = _ai_detour_dir
 	elif not los and absf(to_goal.x) < 220.0 and absf(to_goal.y) > 60.0:
@@ -355,21 +412,26 @@ func _bot_think(delta: float) -> void:
 		in_move = -signf(to_goal.x)
 	else:
 		in_move = _ai_strafe
+		if los and randf() < dodge * 0.08:
+			_ai_strafe = -_ai_strafe  # juke
 	# jetpack: climb toward goal, over walls, or out of pits (not while pinned under a ceiling)
 	var need_up := (to_goal.y < -60.0 and not (is_on_ceiling() and _ai_detour > 0.0)) or is_on_wall() or (not los and randf() < 0.02)
 	if global_position.y > game.map_size().y - 150.0:
 		need_up = true
+	if los and dist < ideal + 200.0 and fuel > 0.5 and randf() < dodge * 0.04:
+		need_up = true  # hop to dodge bullets
 	if in_jet:
 		in_jet = need_up and fuel > 0.05
 	else:
 		in_jet = need_up and fuel > 0.35
 	# aim + shoot
 	if los and _ai_target:
-		var aim_pt := _ai_target.global_position + Vector2(0, -10) + _ai_target.velocity * 0.08
-		in_aim = Vector2.from_angle((aim_pt - muzzle_global()).angle() + _ai_aim_err)
 		var w := weapon_data()
+		var lead := float(_lvl.get("lead", 0.5)) * dist / maxf(200.0, float(w["speed"]))
+		var aim_pt := _ai_target.global_position + Vector2(0, -10) + _ai_target.velocity * lead
+		in_aim = Vector2.from_angle((aim_pt - muzzle_global()).angle() + _ai_aim_err)
 		var rng := float(w["speed"]) * float(w["life"]) * 0.9
-		in_fire = dist < rng
+		in_fire = dist < rng and _ai_trigger
 		# switch to pistol if primary is reloading and target is close
 		if reloading > 0.6 and slot == 0 and dist < 500.0 and randf() < 0.02:
 			switch_weapon()
@@ -377,7 +439,7 @@ func _bot_think(delta: float) -> void:
 			switch_weapon()
 	else:
 		in_aim = Vector2(signf(in_move) if in_move != 0.0 else 1.0, 0.0)
-		if ammo[slot] < mag_of(current_weapon()) and reloading <= 0.0:
+		if ammo[slot] < mag_slot(slot) and reloading <= 0.0:
 			start_reload()
 
 
@@ -402,10 +464,9 @@ func _has_los(target: Vector2) -> bool:
 
 
 # ================================================================ visuals
-const HEAD_TEX := preload("res://assets/char/head.png")
-const BODY_TEX := preload("res://assets/char/body.png")
 const LEG_TEX := preload("res://assets/char/leg.png")
 const NOZZLE := Vector2(-9, 11)
+const DUAL_OFFSET := Vector2(-6, 6)  # second gun sits a little behind/below
 
 var _vis: Node2D            # flips with facing
 var _torso: Node2D          # bobs while walking
@@ -414,6 +475,8 @@ var _body: Sprite2D
 var _legs: Array = []
 var _pivot: Node2D          # shoulder, rotated to aim
 var _gun: Sprite2D
+var _gun2: Sprite2D
+var _shown_dual := false
 var _arms: _Arms
 var _flash_node: _MuzzleFlash
 var _jet_fx: CPUParticles2D
@@ -443,13 +506,14 @@ func _build_visuals() -> void:
 		_legs.append(leg)
 	_torso = Node2D.new()
 	_vis.add_child(_torso)
+	var cs: Dictionary = Catalog.char_skin(str(info.get("char", "trooper")))
 	_body = Sprite2D.new()
-	_body.texture = BODY_TEX
+	_body.texture = load("res://assets/char/%s.png" % cs["body"])
 	_body.scale = Vector2(0.109, 0.109)
 	_body.material = _tint_mat
 	_torso.add_child(_body)
 	_head = Sprite2D.new()
-	_head.texture = HEAD_TEX
+	_head.texture = load("res://assets/char/%s.png" % cs["head"])
 	_head.scale = Vector2(0.135, 0.135)
 	_head.position = Vector2(2, -20)
 	_head.material = _tint_mat
@@ -462,6 +526,10 @@ func _build_visuals() -> void:
 	_arms.color = body_color
 	_arms.back = true
 	_pivot.add_child(_arms)
+	_gun2 = Sprite2D.new()
+	_gun2.modulate = Color(0.78, 0.78, 0.82)
+	_gun2.visible = false
+	_pivot.add_child(_gun2)
 	_gun = Sprite2D.new()
 	_pivot.add_child(_gun)
 	var front := _Arms.new()
@@ -482,16 +550,24 @@ func _build_visuals() -> void:
 func _refresh_gun() -> void:
 	var w := current_weapon()
 	var sk := skin_of(w)
-	if w == _shown_weapon and sk == _shown_skin:
+	var dd := is_dual()
+	if w == _shown_weapon and sk == _shown_skin and dd == _shown_dual:
 		return
 	_shown_weapon = w
 	_shown_skin = sk
+	_shown_dual = dd
 	GunArt.setup_sprite(_gun, w, sk)
+	_gun2.visible = dd
+	if dd:
+		GunArt.setup_sprite(_gun2, w, sk)
+		_gun2.position += DUAL_OFFSET
 	var h := GunArt.hands(w)
 	var front: _Arms = _arms.get_meta("front")
 	front.target = h[0]
 	_arms.target = h[1] if h[1] != null else h[0] + Vector2(-3, 3)
 	_flash_node.position = GunArt.muzzle_offset(w)
+	if dd:
+		_arms.target = h[0] + DUAL_OFFSET
 	_arms.queue_redraw()
 	front.queue_redraw()
 
@@ -530,6 +606,8 @@ func _process(delta: float) -> void:
 	_tint_mat.set_shader_parameter("flash", f * 0.85)
 	if _gun.material is ShaderMaterial:
 		_gun.material.set_shader_parameter("flash", f * 0.6)
+	if is_dual():
+		_flash_node.position = GunArt.muzzle_offset(current_weapon()) + (DUAL_OFFSET if _dual_side == 0 else Vector2.ZERO)
 	_flash_node.amount = clampf(muzzle_flash / 0.06, 0.0, 1.0)
 	_flash_node.visible = muzzle_flash > 0.0
 	_flash_node.queue_redraw()

@@ -62,10 +62,16 @@ class CharacterPreview extends Control:
 			color = v
 			if _mat:
 				_mat.set_shader_parameter("tint", v)
-	var weapon_id := "rifle":
+	var weapon_id := "smg":
 		set(v):
 			weapon_id = v
 			_refresh_gun()
+	var char_id := "trooper":
+		set(v):
+			char_id = v
+			_refresh_char()
+	var _head: Sprite2D
+	var _body: Sprite2D
 	var skin_id := "default":
 		set(v):
 			skin_id = v
@@ -95,12 +101,12 @@ class CharacterPreview extends Control:
 			leg.material = _mat
 			_root.add_child(leg)
 		var body := Sprite2D.new()
-		body.texture = preload("res://assets/char/body.png")
+		_body = body
 		body.scale = Vector2(0.109, 0.109)
 		body.material = _mat
 		_root.add_child(body)
 		var head := Sprite2D.new()
-		head.texture = preload("res://assets/char/head.png")
+		_head = head
 		head.scale = Vector2(0.135, 0.135)
 		head.position = Vector2(2, -20)
 		head.material = _mat
@@ -114,6 +120,7 @@ class CharacterPreview extends Control:
 		_hand = _Hand.new()
 		_pivot.add_child(_hand)
 		resized.connect(_layout)
+		_refresh_char()
 		_refresh_gun()
 
 	func _layout() -> void:
@@ -124,6 +131,13 @@ class CharacterPreview extends Control:
 	func _process(_d: float) -> void:
 		var t := Time.get_ticks_msec() / 1000.0
 		_pivot.rotation = -0.12 + sin(t * 1.6) * 0.05
+
+	func _refresh_char() -> void:
+		if _head == null:
+			return
+		var cs: Dictionary = Catalog.char_skin(char_id)
+		_head.texture = load("res://assets/char/%s.png" % cs["head"])
+		_body.texture = load("res://assets/char/%s.png" % cs["body"])
 
 	func _refresh_gun() -> void:
 		if _gun == null:

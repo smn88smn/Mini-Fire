@@ -104,3 +104,18 @@ see `SIMULATE_IN_EDITOR`).
   `max_hp`, `fuel_mult`, `mag_of()`, `reload_of()` (host applies them, so clients cannot cheat locally).
 - Pickups (medkit/ammo) are host-authoritative in `game.gd` (`_server_pickups`, RPC `_net_pickup`).
 - Fonts: Lilita One (Latin) with Vazirmatn-Bold fallback, both OFL. Art is AI-generated for this project.
+
+## Gameplay notes (v3)
+- `Catalog.GAME_VERSION` is 3. Weapons: `Catalog.WEAPON_ORDER` (pistol=Desert Eagle, smg=Uzi, mp5, mp40, rifle=AK-47,
+  woodpecker, shotgun, svd, sniper, rocket). Every weapon has `scopes` and `dual` flags.
+- Loadout: players spawn with `Catalog.START_WEAPONS` (Uzi + Desert Eagle). `player.gd` keeps `weapons`, `dual`, `slot`;
+  host changes it with `set_loadout()` and syncs with RPC `_net_loadout`.
+- Ground guns (host-authoritative, `game.gd`): spawned from the map list, dropped on death (`_server_drop`),
+  picked with `request_pick` -> `_server_pick`. Same weapon + `dual` flag -> dual wield (2x mag, alternating muzzles).
+- Bot difficulty: `Catalog.BOT_LEVELS` (Easy/Normal/Hard/Legend), lobby setting `bots`, saved as `Profile.bot_level`.
+- Character skins: `Catalog.CHAR_SKINS`, textures `assets/char/head_<id>.png` / `body_<id>.png`, sent as `char` in lobby info.
+- Touch layout: `touch_controls.gd` reads `Profile.controls` `{id: [x_frac, y_frac, scale]}`; editor in
+  `scripts/controls_editor.gd` (Settings -> EDIT CONTROLS).
+- Map `warzone` is drawn by `_MapDraw` in `game.gd` (rooms, terrain polygon with CollisionPolygon2D, props, lights).
+- Scope: camera zoom = base / (1 + (scope-1) * 0.12) plus look-ahead toward the aim direction.
+- Launcher icons are set in `export_presets.cfg` (`assets/icon_192.png`, adaptive fg/bg 432 px).

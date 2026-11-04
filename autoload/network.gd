@@ -17,7 +17,7 @@ const GAME_SCENE := "res://scenes/game.tscn"
 const MENU_SCENE := "res://scenes/main_menu.tscn"
 
 var players: Dictionary = {}  # id(int) -> info Dictionary
-var settings: Dictionary = {"mode": Catalog.MODE_FFA, "map": 0, "time": 1}
+var settings: Dictionary = {"mode": Catalog.MODE_FFA, "map": 0, "time": 1, "bots": 1}
 var in_match := false
 var offline := false
 var last_message := ""  # shown by the main menu after a disconnect
@@ -130,7 +130,7 @@ func _reset_lobby() -> void:
 	_loaded.clear()
 	in_match = false
 	_next_bot_id = -1
-	settings = {"mode": Catalog.MODE_FFA, "map": 0, "time": 1}
+	settings = {"mode": Catalog.MODE_FFA, "map": 0, "time": 1, "bots": Profile.bot_level}
 	var info := Profile.lobby_info()
 	players[1] = info
 
@@ -226,9 +226,9 @@ func _sanitize(info: Dictionary) -> Dictionary:
 	var name_str := str(info.get("name", "Player")).strip_edges().substr(0, 16)
 	if name_str.is_empty():
 		name_str = "Player"
-	var w := str(info.get("weapon", "rifle"))
-	if not w in Catalog.PRIMARY_WEAPONS:
-		w = "rifle"
+	var ch := str(info.get("char", "trooper"))
+	if not Catalog.CHAR_SKINS.has(ch):
+		ch = "trooper"
 	var skins := {}
 	var s_in = info.get("skins", {})
 	if s_in is Dictionary:
@@ -244,7 +244,7 @@ func _sanitize(info: Dictionary) -> Dictionary:
 		"powers": powers,
 		"name": name_str,
 		"color": clampi(int(info.get("color", 0)), 0, Catalog.PLAYER_COLORS.size() - 1),
-		"weapon": w,
+		"char": ch,
 		"skins": skins,
 		"team": clampi(int(info.get("team", 0)), 0, 1),
 		"bot": false,
@@ -278,7 +278,7 @@ func _apply_info(id: int, changes: Dictionary) -> void:
 	if not players.has(id):
 		return
 	var merged: Dictionary = players[id].duplicate(true)
-	for k in ["name", "color", "weapon", "skins", "powers", "team"]:
+	for k in ["name", "color", "char", "skins", "powers", "team"]:
 		if changes.has(k):
 			merged[k] = changes[k]
 	var clean := _sanitize(merged)
@@ -294,6 +294,10 @@ func set_setting(key: String, value) -> void:
 	settings["mode"] = clampi(int(settings["mode"]), 0, 1)
 	settings["map"] = clampi(int(settings["map"]), 0, Catalog.MAPS.size() - 1)
 	settings["time"] = clampi(int(settings["time"]), 0, Catalog.MATCH_TIMES.size() - 1)
+	settings["bots"] = clampi(int(settings.get("bots", 1)), 0, Catalog.BOT_LEVELS.size() - 1)
+	if key == "bots":
+		Profile.bot_level = int(settings["bots"])
+		Profile.save_profile()
 	_broadcast_lobby()
 
 
@@ -309,7 +313,7 @@ func add_bot() -> void:
 	players[id] = {
 		"name": "BOT " + names[absi(id) % names.size()],
 		"color": randi() % Catalog.PLAYER_COLORS.size(),
-		"weapon": Catalog.PRIMARY_WEAPONS[randi() % Catalog.PRIMARY_WEAPONS.size()],
+		"char": Catalog.CHAR_ORDER[randi() % Catalog.CHAR_ORDER.size()],
 		"skins": skins,
 		"team": _smallest_team(),
 		"bot": true,

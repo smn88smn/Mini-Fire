@@ -112,14 +112,14 @@ func setup(p_game: Node) -> void:
 	mid.add_child(score_label)
 	top.add_child(pill)
 	top.add_child(UIKit.hfill())
-	top.add_child(UIKit.spacer(0, 174))
+	top.add_child(UIKit.spacer(0, 230))
 
 	# kill feed
 	feed = VBoxContainer.new()
 	feed.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	feed.offset_left = -420
 	feed.offset_right = -16
-	feed.offset_top = 80
+	feed.offset_top = 118
 	feed.add_theme_constant_override("separation", 2)
 	feed.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(feed)
@@ -220,8 +220,8 @@ func update_hud(p: Player, time_left: float, score_text: String) -> void:
 		bars.max_hp = p.max_hp
 		bars.fuel = p.fuel
 		var w := p.weapon_data()
-		bars.weapon_name = str(w["name"])
-		bars.ammo_text = "RELOADING" if p.reloading > 0.0 else "%d / %d" % [p.ammo[p.slot], p.mag_of(p.current_weapon())]
+		bars.weapon_name = ("2x " if p.is_dual() else "") + str(w["name"])
+		bars.ammo_text = "RELOADING" if p.reloading > 0.0 else "%d / %d" % [p.ammo[p.slot], p.mag_slot(p.slot)]
 		bars.reload_frac = 1.0 - p.reloading / p.reload_of(p.current_weapon()) if p.reloading > 0.0 else 0.0
 		bars.queue_redraw()
 	if _center_until > 0.0 and Time.get_ticks_msec() / 1000.0 > _center_until:

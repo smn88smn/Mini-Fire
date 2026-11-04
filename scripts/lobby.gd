@@ -104,7 +104,7 @@ func _refresh() -> void:
 		var r := HBoxContainer.new()
 		rowp.add_child(r)
 		var av := TextureRect.new()
-		av.texture = preload("res://assets/char/head.png")
+		av.texture = load("res://assets/char/%s.png" % Catalog.char_skin(str(info.get("char", "trooper")))["head"])
 		av.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		av.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		av.custom_minimum_size = Vector2(40, 40)
@@ -119,15 +119,13 @@ func _refresh() -> void:
 		nl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(nl)
-		var gp := Widgets.GunPreview.new()
-		var wpn := str(info.get("weapon", "rifle"))
-		gp.weapon_id = wpn
-		var sk = info.get("skins", {})
-		gp.skin_id = str(sk.get(wpn, "default")) if sk is Dictionary else "default"
-		gp.padding = 0.05
-		gp.backlight = false
-		gp.custom_minimum_size = Vector2(90, 40)
-		r.add_child(gp)
+		var cl := UIKit.label(str(Catalog.char_skin(str(info.get("char", "trooper")))["name"]), 15, UIKit.MUTED)
+		cl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		r.add_child(cl)
+		if info.get("bot", false):
+			var bl := UIKit.label("  " + str(Catalog.bot_level(int(Network.settings.get("bots", 1)))["name"]).to_upper(), 14, UIKit.ACCENT2)
+			bl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			r.add_child(bl)
 		if tdm:
 			var team := int(info.get("team", 0))
 			var tl := UIKit.label(Catalog.TEAM_NAMES[team].to_upper(), 16, Catalog.TEAM_COLORS[team])
@@ -150,18 +148,23 @@ func _refresh() -> void:
 		Profile.color_index = i
 		Profile.save_profile()
 		Network.update_my_info({"color": i}), 34.0))
-	_side.add_child(UIKit.label("WEAPON", 16, UIKit.MUTED))
-	var wrow := HFlowContainer.new()
-	wrow.add_theme_constant_override("h_separation", 6)
-	wrow.add_theme_constant_override("v_separation", 6)
-	for w in Catalog.PRIMARY_WEAPONS:
-		var wid: String = w
-		var b := UIKit.glass_button(Catalog.weapon(wid)["name"], "orange" if wid == str(my.get("weapon", "")) else "dark", func():
-			Profile.primary_weapon = wid
-			Profile.save_profile()
-			Network.update_my_info({"weapon": wid}), Vector2(0, 50), 17)
-		wrow.add_child(b)
-	_side.add_child(wrow)
+	_side.add_child(UIKit.label("CHARACTER", 16, UIKit.MUTED))
+	var owned: Array = []
+	for cid in Catalog.CHAR_ORDER:
+		if Profile.owns_char(cid):
+			owned.append(cid)
+	var cur := maxi(0, owned.find(Profile.char_skin))
+	var crow := HBoxContainer.new()
+	var step := func(d: int):
+		var nid: String = owned[posmod(cur + d, owned.size())]
+		Profile.equip_char(nid)
+		Network.update_my_info({"char": nid})
+	crow.add_child(UIKit.glass_button("<", "blue", step.bind(-1), Vector2(50, 48), 20))
+	var cname := UIKit.label(str(Catalog.char_skin(owned[cur])["name"]), 18, UIKit.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	cname.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	crow.add_child(cname)
+	crow.add_child(UIKit.glass_button(">", "blue", step.bind(1), Vector2(50, 48), 20))
+	_side.add_child(crow)
 	if tdm:
 		_side.add_child(UIKit.label("TEAM", 16, UIKit.MUTED))
 		var trow := HBoxContainer.new()
@@ -184,10 +187,14 @@ func _refresh() -> void:
 		for s in Catalog.MATCH_TIMES:
 			times.append("%d min" % int(s / 60))
 		_side.add_child(_cycle("Time", times, int(Network.settings["time"]), "time"))
+		var lv: Array = []
+		for b in Catalog.BOT_LEVELS:
+			lv.append(b["name"])
+		_side.add_child(_cycle("Bots", lv, int(Network.settings.get("bots", 1)), "bots"))
 	else:
 		var s := Network.settings
-		_side.add_child(UIKit.label("%s  |  %s  |  %d min" % [Catalog.MODE_NAMES[int(s["mode"])], Catalog.MAPS[int(s["map"])]["name"],
-			int(Catalog.MATCH_TIMES[int(s["time"])] / 60)], 18))
+		_side.add_child(UIKit.label("%s  |  %s  |  %d min  |  Bots: %s" % [Catalog.MODE_NAMES[int(s["mode"])], Catalog.MAPS[int(s["map"])]["name"],
+			int(Catalog.MATCH_TIMES[int(s["time"])] / 60), Catalog.bot_level(int(s.get("bots", 1)))["name"]], 16))
 	# ---------------- fixed action area (always visible)
 	UIKit.clear(_actions)
 	if host:
@@ -217,5 +224,5 @@ func _open_shop() -> void:
 	var s := ShopPanel.new()
 	s.closed.connect(func():
 		var li := Profile.lobby_info()
-		Network.update_my_info({"skins": li["skins"], "powers": li["powers"]}))
+		Network.update_my_info({"skins": li["skins"], "powers": li["powers"], "char": li["char"]}))
 	add_child(s)

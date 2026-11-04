@@ -5,6 +5,7 @@ var _content: Control
 var _join_list: VBoxContainer
 var _ip_edit: LineEdit
 var _join_status: Label
+var _view_char := ""
 
 
 func _ready() -> void:
@@ -63,7 +64,7 @@ func _show_home() -> void:
 	_content.add_child(top)
 	var who := UIKit.glass_button("  " + Profile.player_name, "dark", _show_settings, Vector2(0, 54), 22)
 	who.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	who.icon = preload("res://assets/char/head.png")
+	who.icon = load("res://assets/char/%s.png" % Catalog.char_skin(Profile.char_skin)["head"])
 	who.expand_icon = true
 	who.add_theme_constant_override("icon_max_width", 34)
 	who.custom_minimum_size = Vector2(220, 54)
@@ -115,22 +116,35 @@ func _show_home() -> void:
 	var lv := VBoxContainer.new()
 	lv.add_theme_constant_override("separation", 8)
 	card.add_child(lv)
-	lv.add_child(UIKit.label("LOADOUT", 24, UIKit.ACCENT2, HORIZONTAL_ALIGNMENT_CENTER))
+	lv.add_child(UIKit.label("CHARACTER", 24, UIKit.ACCENT2, HORIZONTAL_ALIGNMENT_CENTER))
+	if _view_char == "":
+		_view_char = Profile.char_skin
+	var cs: Dictionary = Catalog.char_skin(_view_char)
 	var prev := Widgets.CharacterPreview.new()
 	prev.custom_minimum_size = Vector2(250, 150)
 	prev.color = Catalog.color_by_index(Profile.color_index)
-	prev.weapon_id = Profile.primary_weapon
-	prev.skin_id = Profile.skin_for(Profile.primary_weapon)
+	prev.char_id = _view_char
+	prev.weapon_id = "smg"
+	prev.skin_id = Profile.skin_for("smg")
 	lv.add_child(prev)
 	var wrow := HBoxContainer.new()
 	wrow.alignment = BoxContainer.ALIGNMENT_CENTER
-	wrow.add_child(UIKit.glass_button("<", "blue", func(): _cycle_weapon(-1), Vector2(52, 52), 26))
-	var wl := UIKit.label(str(Catalog.weapon(Profile.primary_weapon)["name"]), 24, UIKit.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
-	wl.custom_minimum_size = Vector2(130, 0)
+	wrow.add_child(UIKit.glass_button("<", "blue", func(): _cycle_char(-1), Vector2(52, 52), 26))
+	var wl := UIKit.label(str(cs["name"]), 22, UIKit.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	wl.custom_minimum_size = Vector2(150, 0)
 	wl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	wrow.add_child(wl)
-	wrow.add_child(UIKit.glass_button(">", "blue", func(): _cycle_weapon(1), Vector2(52, 52), 26))
+	wrow.add_child(UIKit.glass_button(">", "blue", func(): _cycle_char(1), Vector2(52, 52), 26))
 	lv.add_child(wrow)
+	if not Profile.owns_char(_view_char):
+		var price := "%d %s" % [int(cs["price"]), "MFC" if cs["currency"] == "mfc" else "GEMS"]
+		lv.add_child(UIKit.glass_button("UNLOCK  " + price, "yellow", func(): _open_shop("chars"), Vector2(0, 52), 20))
+	elif _view_char != Profile.char_skin:
+		lv.add_child(UIKit.glass_button("EQUIP", "green", func():
+			Profile.equip_char(_view_char)
+			_show_home(), Vector2(0, 52), 22))
+	else:
+		lv.add_child(UIKit.label("EQUIPPED", 18, UIKit.GOOD, HORIZONTAL_ALIGNMENT_CENTER))
 	var colors := Widgets.color_row(Profile.color_index, func(i: int):
 		Profile.color_index = i
 		Profile.save_profile()
@@ -141,11 +155,12 @@ func _show_home() -> void:
 	lv.add_child(UIKit.label("Wins %d   Kills %d   K/D %.2f" % [Profile.wins, Profile.total_kills, kd], 16, UIKit.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
 
 
-func _cycle_weapon(dir: int) -> void:
-	var list: Array = Catalog.PRIMARY_WEAPONS
-	var i := list.find(Profile.primary_weapon)
-	Profile.primary_weapon = list[(i + dir + list.size()) % list.size()]
-	Profile.save_profile()
+func _cycle_char(dir: int) -> void:
+	var list: Array = Catalog.CHAR_ORDER
+	var i := list.find(_view_char)
+	_view_char = list[(i + dir + list.size()) % list.size()]
+	if Profile.owns_char(_view_char):
+		Profile.equip_char(_view_char)
 	_show_home()
 
 
@@ -308,7 +323,8 @@ func _show_settings() -> void:
 			_show_settings(), Vector2(110, 56), 20))
 	v.add_child(opts)
 	v.add_child(UIKit.spacer(6))
-	var help := UIKit.label("Phone: left stick moves (push up = jetpack), right stick aims and fires.\nPC: A/D move, W/Space jetpack, mouse aim + click fire, R reload, Q switch, Tab score, Esc pause.", 15, UIKit.MUTED)
+	v.add_child(UIKit.glass_button("EDIT CONTROLS", "blue", func(): add_child(ControlsEditor.new()), Vector2(0, 56), 22))
+	var help := UIKit.label("Phone: left stick moves (push up = jetpack), right stick aims and fires. Stand on a gun to pick it up.\nPC: A/D move, W/Space jetpack, mouse aim + click fire, R reload, Q switch, F pick up, Z scope, Tab score, Esc pause.", 15, UIKit.MUTED)
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(help)
 	v.add_child(UIKit.label("Mini Fire v%s" % ProjectSettings.get_setting("application/config/version", "1.0.0"), 14, UIKit.MUTED))

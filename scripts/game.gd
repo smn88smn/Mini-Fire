@@ -29,16 +29,37 @@ var _score_refresh := 0.0
 var _shake := 0.0
 var pickups: Array = []         # {pos, kind, active, t}
 var input_enabled := true  # set false to drive the local player from code (tests, replays)
+var ground_guns: Dictionary = {}  # gid -> {w, pos, spot, t}  (spot >= 0: map weapon spot)
+var _spots: Array = []            # host: map weapon spots {w, pos, gid, t}
+var _drop_seq := 1000
+var scope_idx := 0
+var _scope_weapon := ""
+var _base_zoom := 1.15
+var near_gun := -1                # local: ground gun in reach (gid) or -1
 
 
 # ================================================================ drawing helpers
 class _MapDraw extends Node2D:
 	var map: Dictionary
 	var tex: Texture2D
+	var texs := {}
+	var props_tex: Array = []
+	const PROP_NAMES := ["crate", "barrel", "sandbags", "locker", "lamp", "antenna"]
+	const PROP_H := [64.0, 70.0, 46.0, 96.0, 190.0, 86.0]
 
 	func _ready() -> void:
 		texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 		tex = load("res://assets/tex/%s.png" % str(map.get("tex", "metal")))
+		for n in ["metal", "concrete", "dirt", "interior", "grass"]:
+			texs[n] = load("res://assets/tex/%s.png" % n)
+		for n in PROP_NAMES:
+			props_tex.append(load("res://assets/props/%s.png" % n))
+		if map.has("props"):
+			var lights := _Lights.new()
+			lights.map = map
+			lights.material = FXKit.additive()
+			lights.z_index = 1
+			add_child(lights)
 
 	func _draw() -> void:
 		var size: Vector2 = map["size"]
@@ -46,11 +67,13 @@ class _MapDraw extends Node2D:
 		var edge: Color = map.get("edge", Color(0.05, 0.05, 0.08))
 		var lip: Color = map.get("lip", Color(0.9, 0.7, 0.2))
 		var rocky := str(map.get("tex", "")) == "rock"
+		var big := map.has("ground")
 		# border walls outside the playable area (no empty void at the edges)
+		var border_tex: Texture2D = texs["concrete"] if big else tex
 		var dark := tint.darkened(0.55)
 		for r in [Rect2(-1200, -1200, 1200, size.y + 2400), Rect2(size.x, -1200, 1200, size.y + 2400),
 				Rect2(0, size.y, size.x, 1200)]:
-			draw_texture_rect(tex, r, true, dark)
+			draw_texture_rect(border_tex, r, true, dark)
 		draw_rect(Rect2(-1200, -1200, 1200, size.y + 2400), Color(0, 0, 0, 0.35))
 		draw_rect(Rect2(size.x, -1200, 1200, size.y + 2400), Color(0, 0, 0, 0.35))
 		for gx in [0.0, size.x]:
@@ -58,13 +81,51 @@ class _MapDraw extends Node2D:
 				var w := 6.0 * (8 - i)
 				var x: float = gx - w if gx == 0.0 else gx
 				draw_rect(Rect2(x, -1200, w, size.y + 2400), Color(0, 0, 0, 0.06))
+		# building interiors (behind everything solid)
+		for r in map.get("rooms", []):
+			var rect := Rect2(r[0], r[1], r[2], r[3])
+			draw_texture_rect(texs["interior"], rect, true, Color(0.62, 0.58, 0.6))
+			var steps := 5
+			for i in steps:
+				var f := float(i) / steps
+				draw_rect(Rect2(rect.position.x, rect.position.y + rect.size.y * f, rect.size.x, rect.size.y / steps + 0.5), Color(0.02, 0.03, 0.06, 0.15 + 0.25 * f))
+			draw_rect(rect, Color(0, 0, 0, 0.5), false, 6.0)
+		# support beams
+		for b in map.get("beams", []):
+			var rect := Rect2(b[0], b[1], b[2], b[3])
+			draw_texture_rect(texs["metal"], rect, true, Color(0.55, 0.58, 0.65))
+			draw_rect(Rect2(rect.position.x + rect.size.x * 0.65, rect.position.y, rect.size.x * 0.35, rect.size.y), Color(0, 0, 0, 0.35))
+			var y := rect.position.y + 30.0
+			while y < rect.end.y - 10.0:
+				draw_line(Vector2(rect.position.x, y), Vector2(rect.end.x, y + 26.0), Color(0, 0, 0, 0.35), 2.0)
+				y += 60.0
+			draw_rect(rect, edge, false, 2.0)
+		# rolling terrain
+		if big:
+			_draw_ground(size)
 		# drop shadows first so they sit behind every block
 		for r in map["rects"]:
+			var st := str(r[4]) if r.size() > 4 else ""
+			if st == "crate" or st == "sandbag":
+				continue
 			var rect := Rect2(r[0], r[1], r[2], r[3])
 			draw_rect(Rect2(rect.position + Vector2(8, 12), rect.size), Color(0, 0, 0, 0.32))
 		for r in map["rects"]:
 			var rect := Rect2(r[0], r[1], r[2], r[3])
-			draw_texture_rect(tex, rect, true, tint)
+			var st := str(r[4]) if r.size() > 4 else ""
+			match st:
+				"crate":
+					draw_texture_rect(props_tex[0], rect.grow(3), false)
+					continue
+				"sandbag":
+					draw_texture_rect(props_tex[2], Rect2(rect.position.x - 6, rect.position.y - 8, rect.size.x + 12, rect.size.y + 10), false)
+					continue
+				"concrete":
+					draw_texture_rect(texs["concrete"], rect, true, Color(0.9, 0.92, 0.98))
+				"metal":
+					draw_texture_rect(texs["metal"], rect, true, Color.WHITE)
+				_:
+					draw_texture_rect(tex, rect, true, tint)
 			# vertical shading: lighter top, darker bottom
 			var steps := 6
 			for i in steps:
@@ -72,8 +133,71 @@ class _MapDraw extends Node2D:
 				var h := rect.size.y / steps
 				draw_rect(Rect2(rect.position.x, rect.position.y + h * i, rect.size.x, h + 0.5), Color(0, 0, 0, 0.42 * f * f))
 			draw_rect(Rect2(rect.position, Vector2(rect.size.x, minf(rect.size.y, 12))), Color(1, 1, 1, 0.08))
-			_draw_lip(rect, lip, rocky)
+			if st == "concrete":
+				draw_rect(Rect2(rect.position.x, rect.position.y, rect.size.x, 4), Color(0.85, 0.88, 0.95, 0.85))
+				draw_rect(Rect2(rect.position.x, rect.position.y + 4, rect.size.x, 2), Color(0, 0, 0, 0.35))
+			else:
+				_draw_lip(rect, lip, rocky)
 			draw_rect(rect, edge, false, 3.0)
+		# decorative props standing on surfaces
+		for pr in map.get("props", []):
+			var i := int(pr[2])
+			var t: Texture2D = props_tex[i]
+			var h: float = PROP_H[i] * float(pr[3])
+			var w := h * t.get_width() / t.get_height()
+			var base := Vector2(float(pr[0]), float(pr[1]))
+			draw_set_transform(base + Vector2(0, 2), 0.0, Vector2(1, 0.22))
+			draw_circle(Vector2.ZERO, w * 0.55, Color(0, 0, 0, 0.35))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			draw_texture_rect(t, Rect2(base.x - w * 0.5, base.y - h + 3, w, h), false)
+
+	func _draw_ground(size: Vector2) -> void:
+		var top: Array = map["ground"]
+		var pts := PackedVector2Array()
+		for v in top:
+			pts.append(v)
+		pts.append(Vector2(size.x, size.y + 1200))
+		pts.append(Vector2(0, size.y + 1200))
+		var uvs := PackedVector2Array()
+		for v in pts:
+			uvs.append(v / 256.0)
+		var cols := PackedColorArray()
+		cols.resize(pts.size())
+		cols.fill(map.get("ground_tint", Color.WHITE))
+		draw_polygon(pts, cols, uvs, texs["dirt"])
+		# darken with depth below the surface
+		for k in 6:
+			var off := 40.0 + k * 50.0
+			var band := PackedVector2Array()
+			for v in top:
+				band.append(v + Vector2(0, off))
+			for i in range(top.size() - 1, -1, -1):
+				band.append(top[i] + Vector2(0, off + 50.0))
+			draw_colored_polygon(band, Color(0.02, 0.01, 0.0, 0.1 + k * 0.04))
+		var deep := PackedVector2Array()
+		for v in top:
+			deep.append(v + Vector2(0, 340))
+		deep.append(Vector2(size.x, size.y + 1200))
+		deep.append(Vector2(0, size.y + 1200))
+		draw_colored_polygon(deep, Color(0.03, 0.02, 0.01, 0.45))
+		# dark soil edge + grass along the top profile
+		var line := PackedVector2Array()
+		for v in top:
+			line.append(v + Vector2(0, 4))
+		draw_polyline(line, Color(0.12, 0.08, 0.04), 6.0)
+		var gt: Texture2D = texs["grass"]
+		var gh := 34.0
+		var gw := gh * gt.get_width() / gt.get_height()
+		var u := 0.0
+		for i in top.size() - 1:
+			var a: Vector2 = top[i]
+			var b: Vector2 = top[i + 1]
+			var len := a.distance_to(b)
+			var du := len / gw
+			var quad := PackedVector2Array([a + Vector2(0, -gh * 0.62), b + Vector2(0, -gh * 0.62), b + Vector2(0, gh * 0.38), a + Vector2(0, gh * 0.38)])
+			var quv := PackedVector2Array([Vector2(u, 0), Vector2(u + du, 0), Vector2(u + du, 1), Vector2(u, 1)])
+			draw_polygon(quad, PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE]), quv, gt)
+			u += du
 
 	func _draw_lip(rect: Rect2, lip: Color, rocky: bool) -> void:
 		var top := rect.position.y
@@ -105,6 +229,35 @@ class _MapDraw extends Node2D:
 				x += 22.0
 			draw_rect(Rect2(rect.position.x, top, rect.size.x, 1.5), Color(1, 1, 1, 0.5))
 			draw_rect(Rect2(rect.position.x, top + 7, rect.size.x, 2), Color(0, 0, 0, 0.45))
+
+
+## Warm additive light from street lamps and antenna beacons.
+class _Lights extends Node2D:
+	var map: Dictionary
+
+	func _process(_d: float) -> void:
+		queue_redraw()
+
+	func _draw() -> void:
+		var tex := FXKit.soft_circle()
+		var t := Time.get_ticks_msec() / 1000.0
+		for pr in map.get("props", []):
+			var k := int(pr[2])
+			var base := Vector2(float(pr[0]), float(pr[1]))
+			var sc := float(pr[3])
+			if k == 4:
+				var c := base + Vector2(0, -175.0 * sc)
+				var fl := 0.92 + 0.08 * sin(t * 11.0 + base.x)
+				draw_texture_rect(tex, Rect2(c - Vector2(150, 150) * sc, Vector2(300, 300) * sc), false, Color(1.0, 0.7, 0.3, 0.32 * fl))
+				draw_texture_rect(tex, Rect2(c - Vector2(36, 36) * sc, Vector2(72, 72) * sc), false, Color(1.0, 0.9, 0.6, 0.8 * fl))
+				var cone := PackedVector2Array([c + Vector2(-8, 6), c + Vector2(8, 6), c + Vector2(70, 175 * sc), c + Vector2(-70, 175 * sc)])
+				draw_colored_polygon(cone, Color(1.0, 0.75, 0.35, 0.07 * fl))
+			elif k == 5:
+				var blink := 1.0 if fmod(t + base.x * 0.001, 1.4) < 0.25 else 0.15
+				var c2 := base + Vector2(10 * sc, -80.0 * sc)
+				draw_texture_rect(tex, Rect2(c2 - Vector2(22, 22), Vector2(44, 44)), false, Color(1, 0.2, 0.15, 0.8 * blink))
+			elif k == 1:
+				pass
 
 
 ## Map art behind everything, with gentle parallax.
@@ -139,6 +292,8 @@ class _FX extends Node2D:
 	var explosions: Array = []  # {pos, t, r}
 	var sparks: Array = []      # {pos, vel, t, col}
 	var puffs: Array = []       # smoke {pos, vel, t, life, r, col}
+	var casings: Array = []     # {pos, vel, t, rot, spin}
+	var numbers: Array = []     # {pos, t, text, col}
 	var glow: _Glow
 	var _trail_t := 0.0
 
@@ -166,6 +321,19 @@ class _FX extends Node2D:
 			puff(pos + Vector2.from_angle(randf() * TAU) * randf() * r * 0.4, Vector2.from_angle(randf() * TAU) * randf_range(30, 140) + Vector2(0, -40),
 				randf_range(r * 0.3, r * 0.6), randf_range(0.8, 1.4), Color(0.22, 0.2, 0.2))
 
+	func casing(pos: Vector2, facing: float) -> void:
+		casings.append({"pos": pos, "vel": Vector2(-facing * randf_range(60, 160), randf_range(-260, -160)), "t": 0.0,
+			"rot": randf() * TAU, "spin": randf_range(-20, 20)})
+		if casings.size() > 120:
+			casings = casings.slice(casings.size() - 120)
+
+	func number(pos: Vector2, amount: int, col: Color) -> void:
+		numbers.append({"pos": pos + Vector2(randf_range(-10, 10), -40), "t": 0.0, "text": str(amount), "col": col})
+
+	func dust(pos: Vector2) -> void:
+		for i in 3:
+			puff(pos, Vector2(randf_range(-40, 40), randf_range(-60, -10)), randf_range(5, 9), randf_range(0.35, 0.6), Color(0.55, 0.5, 0.42))
+
 	func burst(pos: Vector2, col: Color) -> void:
 		spark(pos, col.lightened(0.2), 26, 460.0)
 		spark(pos, Color(1, 0.9, 0.6), 10, 300.0)
@@ -189,6 +357,20 @@ class _FX extends Node2D:
 				continue
 			pf["vel"] = (pf["vel"] as Vector2) * (1.0 - 1.8 * delta) + Vector2(0, -30) * delta
 			pf["pos"] = (pf["pos"] as Vector2) + (pf["vel"] as Vector2) * delta
+		for i in range(casings.size() - 1, -1, -1):
+			var c: Dictionary = casings[i]
+			c["t"] += delta
+			if c["t"] > 0.9:
+				casings.remove_at(i)
+				continue
+			c["vel"] = (c["vel"] as Vector2) + Vector2(0, 1100) * delta
+			c["pos"] = (c["pos"] as Vector2) + (c["vel"] as Vector2) * delta
+			c["rot"] += c["spin"] * delta
+		for i in range(numbers.size() - 1, -1, -1):
+			numbers[i]["t"] += delta
+			numbers[i]["pos"] = (numbers[i]["pos"] as Vector2) + Vector2(0, -55) * delta
+			if numbers[i]["t"] > 0.8:
+				numbers.remove_at(i)
 		for i in range(explosions.size() - 1, -1, -1):
 			explosions[i]["t"] += delta
 			if explosions[i]["t"] > 0.55:
@@ -224,6 +406,19 @@ class _FX extends Node2D:
 				draw_colored_polygon(PackedVector2Array([Vector2(-12, -3.5), Vector2(-15, -7), Vector2(-9, -3.5)]), Color(0.25, 0.28, 0.22))
 				draw_colored_polygon(PackedVector2Array([Vector2(-12, 3.5), Vector2(-15, 7), Vector2(-9, 3.5)]), Color(0.25, 0.28, 0.22))
 				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		for c in casings:
+			draw_set_transform(c["pos"], c["rot"], Vector2.ONE)
+			draw_rect(Rect2(-3, -1.3, 6, 2.6), Color(0.95, 0.72, 0.25, 1.0 - c["t"] / 0.9))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		var font := FXKit.game_font()
+		for n in numbers:
+			var a := clampf(1.0 - (float(n["t"]) - 0.4) / 0.4, 0.0, 1.0)
+			var col: Color = n["col"]
+			col.a = a
+			var pos: Vector2 = (n["pos"] as Vector2) - Vector2(40, 0)
+			var fs := 22 if float(n["t"]) > 0.1 else 28
+			draw_string_outline(font, pos, n["text"], HORIZONTAL_ALIGNMENT_CENTER, 80, fs, 5, Color(0, 0, 0, 0.8 * a))
+			draw_string(font, pos, n["text"], HORIZONTAL_ALIGNMENT_CENTER, 80, fs, col)
 
 
 ## Additive glow layer: tracers, sparks, fire.
@@ -240,7 +435,7 @@ class _Glow extends Node2D:
 					var fl := p - dir * 14.0
 					draw_texture_rect(tex, Rect2(fl - Vector2(16, 16), Vector2(32, 32)), false, Color(1, 0.5, 0.1, 0.9))
 					draw_texture_rect(tex, Rect2(fl - Vector2(7, 7), Vector2(14, 14)), false, Color(1, 1, 0.8, 1))
-				"sniper":
+				"sniper", "svd", "woodpecker":
 					draw_line(p - dir * 90.0, p, Color(0.4, 0.8, 1.0, 0.35), 7.0)
 					draw_line(p - dir * 90.0, p, Color(0.85, 0.95, 1.0, 0.95), 2.0)
 				_:
@@ -296,6 +491,42 @@ class _Pickups extends Node2D:
 			draw_texture_rect(tex, Rect2(base + Vector2(-w * 0.5, -h * 0.5 + bob - 4), Vector2(w, h)), false)
 
 
+## Weapons lying on the ground (map spots + dropped by dead players).
+class _GroundGuns extends Node2D:
+	var game: Node
+
+	func _process(_d: float) -> void:
+		queue_redraw()
+
+	func _draw() -> void:
+		var t := Time.get_ticks_msec() / 1000.0
+		var glow := FXKit.soft_circle()
+		var font := FXKit.game_font()
+		for gid in game.ground_guns:
+			var g: Dictionary = game.ground_guns[gid]
+			var w: String = g["w"]
+			var base: Vector2 = g["pos"]
+			if int(g["spot"]) < 0 and float(g["t"]) < 5.0 and fmod(t * 6.0, 1.0) < 0.4:
+				continue  # blink before a dropped gun disappears
+			var tier := int(Catalog.weapon(w).get("tier", 1))
+			var tiers := [Color(0.8, 0.85, 1.0), Color(0.4, 0.8, 1.0), Color(0.75, 0.45, 1.0), Color(1.0, 0.7, 0.2)]
+			var gc: Color = tiers[clampi(tier - 1, 0, 3)]
+			var bob := sin(t * 2.6 + float(gid)) * 3.0
+			draw_set_transform(base + Vector2(0, 24), 0.0, Vector2(1, 0.22))
+			draw_circle(Vector2.ZERO, 30.0, Color(0, 0, 0, 0.35))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			gc.a = 0.32 + 0.1 * sin(t * 4.0 + float(gid))
+			draw_texture_rect(glow, Rect2(base + Vector2(-46, -34 + bob), Vector2(92, 68)), false, gc)
+			var tex: Texture2D = GunArt.texture(w)
+			var gw := float(GunArt.art(w)["w"]) * 1.15
+			var gh := gw * tex.get_height() / tex.get_width()
+			draw_texture_rect(tex, Rect2(base + Vector2(-gw * 0.5, -gh * 0.5 + bob), Vector2(gw, gh)), false)
+			if int(gid) == int(game.near_gun):
+				var nm := str(Catalog.weapon(w)["name"]).to_upper()
+				draw_string_outline(font, base + Vector2(-80, -30 + bob), nm, HORIZONTAL_ALIGNMENT_CENTER, 160, 15, 4, Color(0, 0, 0, 0.8))
+				draw_string(font, base + Vector2(-80, -30 + bob), nm, HORIZONTAL_ALIGNMENT_CENTER, 160, 15, Color(1, 0.92, 0.5))
+
+
 # ================================================================ setup
 func _ready() -> void:
 	name = "Game"
@@ -313,7 +544,8 @@ func _ready() -> void:
 	for id in ids:
 		_spawn_player(int(id), Network.players[id])
 	camera = Camera2D.new()
-	camera.zoom = Vector2(1.3, 1.3) if Profile.use_touch_controls() else Vector2(1.15, 1.15)
+	_base_zoom = 1.3 if Profile.use_touch_controls() else 1.15
+	camera.zoom = Vector2(_base_zoom, _base_zoom)
 	camera.limit_left = -150
 	camera.limit_top = -250
 	camera.limit_right = int(map["size"].x) + 150
@@ -332,6 +564,8 @@ func _ready() -> void:
 	hud.touch.switch_pressed.connect(func():
 		var p := local_player()
 		if p: p.switch_weapon())
+	hud.touch.scope_pressed.connect(cycle_scope)
+	hud.touch.pick_pressed.connect(request_pick)
 	hud.show_center("Waiting for players...")
 	_bots_only = not Network.has_humans_besides_me()
 	Network.player_left.connect(_on_player_left)
@@ -347,6 +581,10 @@ func _build_world() -> void:
 	md.z_index = -10
 	add_child(md)
 	_build_pickups()
+	var gg := _GroundGuns.new()
+	gg.game = self
+	gg.z_index = -4
+	add_child(gg)
 	var pk := _Pickups.new()
 	pk.game = self
 	pk.z_index = -5
@@ -369,6 +607,16 @@ func _build_world() -> void:
 		cs.shape = sh
 		cs.position = Vector2(r[0], r[1]) + sh.size * 0.5
 		body.add_child(cs)
+	if map.has("ground"):
+		var poly := PackedVector2Array()
+		for v in map["ground"]:
+			poly.append(v)
+		poly.append(Vector2(size.x, size.y + 400))
+		poly.append(Vector2(0, size.y + 400))
+		var cp := CollisionPolygon2D.new()
+		cp.build_mode = CollisionPolygon2D.BUILD_SOLIDS
+		cp.polygon = poly
+		body.add_child(cp)
 
 
 func _add_vignette() -> void:
@@ -396,6 +644,10 @@ func _add_vignette() -> void:
 ## Pickup spots are derived from the map so every peer computes the same list.
 func _build_pickups() -> void:
 	pickups.clear()
+	if map.has("pickups"):
+		for pk in map["pickups"]:
+			pickups.append({"pos": Vector2(float(pk[0]), float(pk[1])), "kind": str(pk[2]), "active": true, "t": 0.0})
+		return
 	var n := 0
 	var rects: Array = map["rects"]
 	for i in rects.size():
@@ -423,7 +675,7 @@ func _server_pickups(delta: float) -> void:
 			if pk["kind"] == "medkit":
 				need = p.hp < p.max_hp
 			else:
-				need = p.ammo[0] < p.mag_of(p.weapons[0]) or p.ammo[1] < p.mag_of(p.weapons[1])
+				need = p.ammo[0] < p.mag_slot(0) or p.ammo[1] < p.mag_slot(1)
 			if need:
 				pk["t"] = Catalog.PICKUP_RESPAWN
 				_all("_net_pickup", [i, p.peer_id])
@@ -443,7 +695,7 @@ func _net_pickup(i: int, pid: int) -> void:
 			p.hp = mini(p.max_hp, p.hp + Catalog.PICKUP_HEAL)
 			fx.spark(pk["pos"], Color(0.4, 1.0, 0.5), 14, 260.0)
 		else:
-			p.ammo = [p.mag_of(p.weapons[0]), p.mag_of(p.weapons[1])]
+			p.ammo = [p.mag_slot(0), p.mag_slot(1)]
 			p.reloading = 0.0
 			fx.spark(pk["pos"], Color(1.0, 0.85, 0.3), 14, 260.0)
 		if pid == multiplayer.get_unique_id():
@@ -465,6 +717,219 @@ func _spawn_player(id: int, info: Dictionary) -> void:
 	players_node.add_child(p)
 	p.do_die()  # hidden until the match begins
 	stats[id] = {"k": 0, "d": 0}
+
+
+# ================================================================ ground guns
+## Map weapon spots: explicit list for big maps, otherwise one gun on a few wide ledges.
+func _map_gun_spots() -> Array:
+	if map.has("guns"):
+		return map["guns"]
+	var out: Array = []
+	var pool := ["mp5", "rifle", "shotgun", "mp40", "woodpecker", "svd", "sniper", "rocket"]
+	var n := 0
+	for r in map["rects"]:
+		if float(r[2]) >= 300.0 and float(r[3]) == 40.0 and float(r[1]) < map["size"].y - 150.0:
+			n += 1
+			if n % 2 == 0:
+				continue
+			out.append([float(r[0]) + float(r[2]) * 0.5 - 90.0, float(r[1]) - 26.0, pool[(n / 2) % pool.size()]])
+	return out
+
+
+func _server_init_ground_guns() -> void:
+	_spots.clear()
+	var list := _map_gun_spots()
+	for i in list.size():
+		var g: Array = list[i]
+		var pos := Vector2(float(g[0]), float(g[1]))
+		_spots.append({"w": str(g[2]), "pos": pos, "gid": i, "t": 0.0})
+		_all("_net_ground_add", [i, str(g[2]), pos, i])
+
+
+func _server_ground_tick(delta: float) -> void:
+	for gid in ground_guns.keys():
+		var g: Dictionary = ground_guns[gid]
+		if int(g["spot"]) < 0:
+			g["t"] = float(g["t"]) - delta
+			if float(g["t"]) <= 0.0:
+				_all("_net_ground_remove", [int(gid)])
+	for i in _spots.size():
+		var sp: Dictionary = _spots[i]
+		if int(sp["gid"]) >= 0:
+			continue
+		sp["t"] = float(sp["t"]) - delta
+		if float(sp["t"]) <= 0.0:
+			sp["gid"] = i
+			_all("_net_ground_add", [i, sp["w"], sp["pos"], i])
+
+
+## Drops a weapon at a position (host). Rests on the floor below the point.
+func _server_drop(w: String, pos: Vector2) -> void:
+	var q := PhysicsRayQueryParameters2D.create(pos + Vector2(0, -10), pos + Vector2(0, 900), 1)
+	var hit := get_world_2d().direct_space_state.intersect_ray(q)
+	var at := pos
+	if not hit.is_empty():
+		at = (hit["position"] as Vector2) + Vector2(0, -26)
+	var gid := _drop_seq
+	_drop_seq += 1
+	_all("_net_ground_add", [gid, w, at, -1])
+	# keep the number of loose guns bounded
+	var drops: Array = []
+	for k in ground_guns:
+		if int(ground_guns[k]["spot"]) < 0:
+			drops.append(int(k))
+	if drops.size() > 14:
+		drops.sort()
+		_all("_net_ground_remove", [drops[0]])
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_ground_add(gid: int, w: String, pos: Vector2, spot: int) -> void:
+	ground_guns[gid] = {"w": w, "pos": pos, "spot": spot, "t": Catalog.GROUND_GUN_LIFETIME}
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_ground_remove(gid: int) -> void:
+	if not ground_guns.has(gid):
+		return
+	var spot := int(ground_guns[gid]["spot"])
+	ground_guns.erase(gid)
+	if multiplayer.is_server() and spot >= 0 and spot < _spots.size():
+		_spots[spot]["gid"] = -1
+		_spots[spot]["t"] = Catalog.GUN_SPOT_RESPAWN
+
+
+## Nearest ground gun within reach of a player, or -1.
+func gun_near(p: Player) -> int:
+	var best := -1
+	var best_d: float = Catalog.PICK_RADIUS
+	for gid in ground_guns:
+		var d := (p.global_position + Vector2(0, 6)).distance_to(ground_guns[gid]["pos"])
+		if d < best_d:
+			best_d = d
+			best = int(gid)
+	return best
+
+
+## What picking up `w` would do for p: "dual", "ammo" or "swap".
+func pick_kind(p: Player, w: String) -> String:
+	for i in 2:
+		if p.weapons[i] == w:
+			if bool(Catalog.weapon(w).get("dual", false)) and not bool(p.dual[i]):
+				return "dual"
+			return "ammo"
+	return "swap"
+
+
+func request_pick() -> void:
+	var p := local_player()
+	if p == null or not p.alive or not started or ended:
+		return
+	var gid := gun_near(p)
+	if gid < 0:
+		return
+	if multiplayer.is_server():
+		_server_pick(p, gid)
+	else:
+		_rpc_pick.rpc_id(1, gid)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_pick(gid: int) -> void:
+	if multiplayer.is_server():
+		var p := get_player(multiplayer.get_remote_sender_id())
+		if p:
+			_server_pick(p, gid)
+
+
+func _server_pick(p: Player, gid: int) -> void:
+	if p == null or not p.alive or not ground_guns.has(gid) or ended:
+		return
+	var g: Dictionary = ground_guns[gid]
+	if p.global_position.distance_to(g["pos"]) > Catalog.PICK_RADIUS + 40.0:
+		return
+	var w: String = g["w"]
+	var weapons: Array = p.weapons.duplicate()
+	var dual: Array = p.dual.duplicate()
+	var slot := p.slot
+	var kind := pick_kind(p, w)
+	var refill := -1
+	if kind == "dual" or kind == "ammo":
+		var i := weapons.find(w)
+		if kind == "dual":
+			dual[i] = true
+			slot = i
+		refill = i
+	else:
+		var old: String = weapons[slot]
+		weapons[slot] = w
+		dual[slot] = false
+		refill = slot
+		_server_drop(old, p.global_position)
+	_all("_net_ground_remove", [gid])
+	_all("_net_loadout", [p.peer_id, weapons, dual, refill, slot])
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_loadout(pid: int, weapons: Array, dual: Array, refill: int, slot: int) -> void:
+	var p := get_player(pid)
+	if p == null:
+		return
+	p.set_loadout(weapons, dual, refill, slot)
+	if pid == multiplayer.get_unique_id():
+		var w: String = weapons[slot]
+		hud.show_center(("DUAL " if dual[slot] else "") + str(Catalog.weapon(w)["name"]).to_upper(), 0.9)
+
+
+## Bots: position of a better gun within `radius`, or ZERO.
+func bot_loot_target(p: Player, radius: float) -> Vector2:
+	var my_tier := int(Catalog.weapon(p.current_weapon()).get("tier", 1))
+	var best := Vector2.ZERO
+	var best_d := radius
+	for gid in ground_guns:
+		var g: Dictionary = ground_guns[gid]
+		var d := p.global_position.distance_to(g["pos"])
+		if d >= best_d:
+			continue
+		var k := pick_kind(p, g["w"])
+		var good := k == "dual" or (k == "swap" and int(Catalog.weapon(g["w"]).get("tier", 1)) > my_tier)
+		if k == "ammo" and p.ammo[p.slot] < p.mag_slot(p.slot) / 3:
+			good = true
+		if good:
+			best = g["pos"]
+			best_d = d
+	return best
+
+
+func bot_try_pick(p: Player) -> void:
+	if multiplayer.is_server():
+		var gid := gun_near(p)
+		if gid >= 0:
+			_server_pick(p, gid)
+
+
+# ================================================================ scope
+func scopes_of(w: String) -> Array:
+	return Catalog.weapon(w).get("scopes", [1])
+
+
+func scope_level() -> int:
+	var p := local_player()
+	if p == null:
+		return 1
+	var sc := scopes_of(p.current_weapon())
+	return int(sc[clampi(scope_idx, 0, sc.size() - 1)])
+
+
+func cycle_scope() -> void:
+	var p := local_player()
+	if p == null:
+		return
+	var sc := scopes_of(p.current_weapon())
+	if sc.size() <= 1:
+		return
+	scope_idx = (scope_idx + 1) % sc.size()
+	Sfx.play("reload", 0.3)
 
 
 # ================================================================ queries
@@ -522,6 +987,7 @@ func server_begin() -> void:
 				break
 		used[pos] = true
 		spawns[p.peer_id] = pos + Vector2(randf_range(-20, 20), 0)
+	_server_init_ground_guns()
 	_all("_begin", [t, spawns, stats])
 
 
@@ -598,6 +1064,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				if p and p.slot != 0: p.switch_weapon()
 			KEY_2:
 				if p and p.slot != 1: p.switch_weapon()
+			KEY_F, KEY_G:
+				request_pick()
+			KEY_Z, KEY_C:
+				cycle_scope()
 			KEY_TAB:
 				hud.scoreboard.visible = true
 	elif event is InputEventKey and not event.pressed and event.physical_keycode == KEY_TAB:
@@ -615,12 +1085,21 @@ func _notification(what: int) -> void:
 
 func _update_camera(delta: float) -> void:
 	var p := local_player()
+	var sl := 1.0
+	if p:
+		if p.current_weapon() != _scope_weapon:
+			_scope_weapon = p.current_weapon()
+			scope_idx = 0
+		sl = float(scope_level()) if p.alive else 1.0
+	var want := _base_zoom / (1.0 + (sl - 1.0) * 0.12)
+	var z := lerpf(camera.zoom.x, want, clampf(delta * 6.0, 0.0, 1.0))
+	camera.zoom = Vector2(z, z)
 	if p and p.alive:
 		var look := Vector2.ZERO
 		if not hud.touch.visible:
-			look = (get_global_mouse_position() - p.global_position).limit_length(400.0) * 0.25
+			look = (get_global_mouse_position() - p.global_position).limit_length(400.0 + (sl - 1.0) * 160.0) * (0.25 + (sl - 1.0) * 0.07)
 		else:
-			look = p.in_aim.normalized() * 90.0
+			look = p.in_aim.normalized() * (90.0 + (sl - 1.0) * 110.0)
 		camera.global_position = p.global_position + look
 	_shake = maxf(0.0, _shake - delta)
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * 10.0 * _shake / 0.25 if _shake > 0.0 else Vector2.ZERO
@@ -628,6 +1107,15 @@ func _update_camera(delta: float) -> void:
 
 func _update_hud(delta: float) -> void:
 	var lp := local_player()
+	near_gun = gun_near(lp) if lp and lp.alive and started and not ended else -1
+	if near_gun >= 0:
+		var w: String = ground_guns[near_gun]["w"]
+		hud.touch.set_pick(w, pick_kind(lp, w))
+	else:
+		hud.touch.set_pick("", "")
+	if lp:
+		var sc := scopes_of(lp.current_weapon())
+		hud.touch.set_weapon_info(lp.weapons[1 - lp.slot], scope_level(), sc.size() > 1)
 	hud.update_hud(lp, time_left, _score_text())
 	if lp and not lp.alive and started and not ended:
 		_local_dead_timer = maxf(0.0, _local_dead_timer - delta)
@@ -697,7 +1185,9 @@ func _server_fire(id: int, weapon_id: String, origin: Vector2, angle: float) -> 
 	var w := Catalog.weapon(weapon_id)
 	var now := Time.get_ticks_msec()
 	var key := "%d:%s" % [id, weapon_id]
-	if now - int(_last_fire.get(key, -100000)) < int(float(w["fire_delay"]) * 1000.0 * 0.7):
+	var si := p.weapons.find(weapon_id)
+	var fd := float(w["fire_delay"]) * (Catalog.DUAL_FIRE_FACTOR if si >= 0 and bool(p.dual[si]) else 1.0)
+	if now - int(_last_fire.get(key, -100000)) < int(fd * 1000.0 * 0.7):
 		return  # firing faster than the weapon allows
 	_last_fire[key] = now
 	if origin.distance_to(p.global_position) > 140.0:
@@ -718,6 +1208,10 @@ func _spawn_bullets(id: int, weapon_id: String, origin: Vector2, angles: PackedF
 	if p:
 		ex.append(p.get_rid())
 		p.muzzle_flash = 0.06
+		if not p.is_controlled_here() and p.is_dual():
+			p._dual_side = 1 - p._dual_side
+		if weapon_id != "rocket" and origin.distance_to(listener_pos()) < 1400.0:
+			fx.casing(p.global_position + Player.SHOULDER + Vector2.from_angle(angles[0]) * 14.0, signf(cos(angles[0])))
 		if is_tdm():
 			for o in get_players():
 				if o != p and o.team == p.team:
@@ -749,6 +1243,7 @@ func _update_bullets(delta: float) -> void:
 				_server_bullet_hit(b, hit["collider"], hit["position"])
 			elif not hit["collider"] is Player:
 				fx.spark(hit["position"], Color(1, 0.85, 0.5), 4)
+				fx.dust(hit["position"])
 			continue
 		b["pos"] = to
 		if b["life"] <= 0.0:
@@ -781,6 +1276,8 @@ func _server_bullet_hit(b: Dictionary, collider: Object, pos: Vector2) -> void:
 func _bullet_end(bid: int, pos: Vector2, hit_player: bool) -> void:
 	_remove_bullet(bid)
 	fx.spark(pos, Color(1, 0.2, 0.2) if hit_player else Color(1, 0.85, 0.5), 6 if hit_player else 4)
+	if not hit_player:
+		fx.dust(pos)
 
 
 func _server_explode(owner_id: int, weapon_id: String, pos: Vector2) -> void:
@@ -819,6 +1316,8 @@ func _server_damage(victim: Player, amount: int, attacker_id: int, weapon_id: St
 		var a := get_player(attacker_id)
 		if a and not a.is_enemy_of(victim):
 			return
+		if a and a.is_bot:
+			amount = maxi(1, int(round(amount * float(a._lvl.get("dmg", 1.0)))))
 	victim.hp -= amount
 	if victim.hp <= 0:
 		_server_kill(victim, attacker_id, weapon_id)
@@ -838,6 +1337,8 @@ func _server_kill(victim: Player, killer_id: int, weapon_id: String) -> void:
 		if k and is_tdm():
 			team_score[k.team] += 1
 	_respawn_q[vid] = Catalog.RESPAWN_TIME
+	if weapon_id != "fall":
+		_server_drop(victim.current_weapon(), victim.global_position)
 	_all("_net_death", [vid, killer_id, weapon_id, stats, team_score])
 	_check_win()
 
@@ -847,9 +1348,12 @@ func _net_hp(id: int, hp: int, attacker_id: int) -> void:
 	var p := get_player(id)
 	if p == null:
 		return
+	var dmg := p.hp - hp
 	p.hp = hp
 	p.flash = 0.08
 	var me := multiplayer.get_unique_id()
+	if dmg > 0 and (attacker_id == me or id == me):
+		fx.number(p.global_position, dmg, Color(1, 0.35, 0.3) if id == me else Color(1, 0.9, 0.35))
 	if attacker_id == me and id != me:
 		Sfx.play("hit", 0.6, 0.0)
 	if id == me:
@@ -904,6 +1408,7 @@ func _server_tick(delta: float) -> void:
 			if p:
 				_all("_net_respawn", [int(id), _pick_spawn(p)])
 	_server_pickups(delta)
+	_server_ground_tick(delta)
 	# fell out of the map
 	var limit_y: float = map["size"].y + 150.0
 	for p in get_players():
