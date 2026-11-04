@@ -27,52 +27,126 @@ var _bots_only := true
 var _local_dead_timer := 0.0
 var _score_refresh := 0.0
 var _shake := 0.0
+var pickups: Array = []         # {pos, kind, active, t}
 var input_enabled := true  # set false to drive the local player from code (tests, replays)
 
 
 # ================================================================ drawing helpers
 class _MapDraw extends Node2D:
 	var map: Dictionary
+	var tex: Texture2D
+
+	func _ready() -> void:
+		texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+		tex = load("res://assets/tex/%s.png" % str(map.get("tex", "metal")))
 
 	func _draw() -> void:
 		var size: Vector2 = map["size"]
-		var bg: Color = map["bg"]
-		var solid: Color = map["solid"]
-		# outside area
-		draw_rect(Rect2(-2000, -2000, size.x + 4000, size.y + 4000), bg.darkened(0.55))
-		# sky gradient
-		var bands := 12
-		for i in bands:
-			var f := float(i) / bands
-			draw_rect(Rect2(0, size.y * f, size.x, size.y / bands + 1), bg.lightened(0.12 * (1.0 - f)))
-		# stars / dust
-		var rng := RandomNumberGenerator.new()
-		rng.seed = 1234
-		for i in 160:
-			var p := Vector2(rng.randf() * size.x, rng.randf() * size.y * 0.7)
-			draw_circle(p, rng.randf_range(0.8, 2.2), Color(1, 1, 1, rng.randf_range(0.08, 0.35)))
-		# distant hills
-		var hill := PackedVector2Array()
-		hill.append(Vector2(0, size.y))
-		var x := 0.0
-		while x <= size.x:
-			hill.append(Vector2(x, size.y * 0.62 + sin(x * 0.0031) * 120.0 + sin(x * 0.011) * 40.0))
-			x += 60.0
-		hill.append(Vector2(size.x, size.y))
-		draw_colored_polygon(hill, bg.darkened(0.3))
-		# solids
+		var tint: Color = map.get("tex_tint", Color.WHITE)
+		var edge: Color = map.get("edge", Color(0.05, 0.05, 0.08))
+		var lip: Color = map.get("lip", Color(0.9, 0.7, 0.2))
+		var rocky := str(map.get("tex", "")) == "rock"
+		# border walls outside the playable area (no empty void at the edges)
+		var dark := tint.darkened(0.55)
+		for r in [Rect2(-1200, -1200, 1200, size.y + 2400), Rect2(size.x, -1200, 1200, size.y + 2400),
+				Rect2(0, size.y, size.x, 1200)]:
+			draw_texture_rect(tex, r, true, dark)
+		draw_rect(Rect2(-1200, -1200, 1200, size.y + 2400), Color(0, 0, 0, 0.35))
+		draw_rect(Rect2(size.x, -1200, 1200, size.y + 2400), Color(0, 0, 0, 0.35))
+		for gx in [0.0, size.x]:
+			for i in 8:
+				var w := 6.0 * (8 - i)
+				var x: float = gx - w if gx == 0.0 else gx
+				draw_rect(Rect2(x, -1200, w, size.y + 2400), Color(0, 0, 0, 0.06))
+		# drop shadows first so they sit behind every block
 		for r in map["rects"]:
 			var rect := Rect2(r[0], r[1], r[2], r[3])
-			draw_rect(rect, solid)
-			draw_rect(Rect2(rect.position, Vector2(rect.size.x, 5)), solid.lightened(0.3))
-			draw_rect(Rect2(rect.position.x, rect.end.y - 4, rect.size.x, 4), solid.darkened(0.3))
-			draw_rect(rect, solid.darkened(0.45), false, 2.0)
+			draw_rect(Rect2(rect.position + Vector2(8, 12), rect.size), Color(0, 0, 0, 0.32))
+		for r in map["rects"]:
+			var rect := Rect2(r[0], r[1], r[2], r[3])
+			draw_texture_rect(tex, rect, true, tint)
+			# vertical shading: lighter top, darker bottom
+			var steps := 6
+			for i in steps:
+				var f := float(i) / steps
+				var h := rect.size.y / steps
+				draw_rect(Rect2(rect.position.x, rect.position.y + h * i, rect.size.x, h + 0.5), Color(0, 0, 0, 0.42 * f * f))
+			draw_rect(Rect2(rect.position, Vector2(rect.size.x, minf(rect.size.y, 12))), Color(1, 1, 1, 0.08))
+			_draw_lip(rect, lip, rocky)
+			draw_rect(rect, edge, false, 3.0)
+
+	func _draw_lip(rect: Rect2, lip: Color, rocky: bool) -> void:
+		var top := rect.position.y
+		if rocky:
+			# sandy wavy crust
+			var pts := PackedVector2Array()
+			pts.append(Vector2(rect.position.x, top + 8))
+			var x := rect.position.x
+			while x <= rect.end.x:
+				pts.append(Vector2(x, top - 2.0 + sin(x * 0.09) * 1.6 + sin(x * 0.023) * 1.5))
+				x += 10.0
+			pts.append(Vector2(rect.end.x, top - 2.0))
+			pts.append(Vector2(rect.end.x, top + 8))
+			draw_colored_polygon(pts, lip)
+			draw_rect(Rect2(rect.position.x, top + 6, rect.size.x, 3), lip.darkened(0.35))
+			draw_polyline(pts.slice(1, pts.size() - 1), lip.lightened(0.35), 2.0)
+		else:
+			# hazard stripes on metal ledges
+			var band := Rect2(rect.position.x, top, rect.size.x, 7)
+			draw_rect(band, lip)
+			var x := rect.position.x - 7.0
+			while x < rect.end.x:
+				var l := rect.position.x
+				var rr := rect.end.x
+				var poly := PackedVector2Array([Vector2(clampf(x + 7.0, l, rr), top), Vector2(clampf(x + 14.0, l, rr), top),
+					Vector2(clampf(x + 7.0, l, rr), top + 7), Vector2(clampf(x, l, rr), top + 7)])
+				if poly[1].x - poly[3].x > 1.0:
+					draw_colored_polygon(poly, Color(0.08, 0.08, 0.1, 0.85))
+				x += 22.0
+			draw_rect(Rect2(rect.position.x, top, rect.size.x, 1.5), Color(1, 1, 1, 0.5))
+			draw_rect(Rect2(rect.position.x, top + 7, rect.size.x, 2), Color(0, 0, 0, 0.45))
+
+
+## Map art behind everything, with gentle parallax.
+class _Backdrop extends CanvasLayer:
+	var game: Node
+	var rect: TextureRect
+
+	func _init(image: String) -> void:
+		layer = -20
+		rect = TextureRect.new()
+		rect.texture = load("res://assets/bg/%s.jpg" % image)
+		rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(rect)
+
+	func _process(_d: float) -> void:
+		var vp := get_viewport().get_visible_rect().size
+		var extra := vp * 0.14
+		rect.size = vp + extra
+		if game and game.camera:
+			var ms: Vector2 = game.map["size"]
+			var cam: Camera2D = game.camera
+			var f: Vector2 = (cam.get_screen_center_position() / ms).clamp(Vector2.ZERO, Vector2.ONE)
+			rect.position = -extra * f
+		else:
+			rect.position = -extra * 0.5
 
 
 class _FX extends Node2D:
 	var game: Node
 	var explosions: Array = []  # {pos, t, r}
 	var sparks: Array = []      # {pos, vel, t, col}
+	var puffs: Array = []       # smoke {pos, vel, t, life, r, col}
+	var glow: _Glow
+	var _trail_t := 0.0
+
+	func _ready() -> void:
+		glow = _Glow.new()
+		glow.fx = self
+		glow.material = FXKit.additive()
+		add_child(glow)
 
 	func spark(pos: Vector2, col: Color, n: int = 6, speed: float = 260.0) -> void:
 		for i in n:
@@ -80,9 +154,23 @@ class _FX extends Node2D:
 		if sparks.size() > 400:
 			sparks = sparks.slice(sparks.size() - 400)
 
+	func puff(pos: Vector2, vel: Vector2, r: float, life: float, col: Color) -> void:
+		puffs.append({"pos": pos, "vel": vel, "t": 0.0, "life": life, "r": r, "col": col})
+		if puffs.size() > 300:
+			puffs = puffs.slice(puffs.size() - 300)
+
 	func explode(pos: Vector2, r: float) -> void:
 		explosions.append({"pos": pos, "t": 0.0, "r": r})
-		spark(pos, Color(1, 0.6, 0.2), 24, 520.0)
+		spark(pos, Color(1, 0.6, 0.2), 30, 620.0)
+		for i in 12:
+			puff(pos + Vector2.from_angle(randf() * TAU) * randf() * r * 0.4, Vector2.from_angle(randf() * TAU) * randf_range(30, 140) + Vector2(0, -40),
+				randf_range(r * 0.3, r * 0.6), randf_range(0.8, 1.4), Color(0.22, 0.2, 0.2))
+
+	func burst(pos: Vector2, col: Color) -> void:
+		spark(pos, col.lightened(0.2), 26, 460.0)
+		spark(pos, Color(1, 0.9, 0.6), 10, 300.0)
+		for i in 7:
+			puff(pos, Vector2.from_angle(randf() * TAU) * randf_range(40, 120), randf_range(14, 26), randf_range(0.5, 0.9), col.darkened(0.3))
 
 	func _process(delta: float) -> void:
 		for i in range(sparks.size() - 1, -1, -1):
@@ -93,33 +181,119 @@ class _FX extends Node2D:
 				continue
 			s["vel"] = (s["vel"] as Vector2) + Vector2(0, 900) * delta
 			s["pos"] = (s["pos"] as Vector2) + (s["vel"] as Vector2) * delta
+		for i in range(puffs.size() - 1, -1, -1):
+			var pf: Dictionary = puffs[i]
+			pf["t"] += delta
+			if pf["t"] >= pf["life"]:
+				puffs.remove_at(i)
+				continue
+			pf["vel"] = (pf["vel"] as Vector2) * (1.0 - 1.8 * delta) + Vector2(0, -30) * delta
+			pf["pos"] = (pf["pos"] as Vector2) + (pf["vel"] as Vector2) * delta
 		for i in range(explosions.size() - 1, -1, -1):
 			explosions[i]["t"] += delta
-			if explosions[i]["t"] > 0.45:
+			if explosions[i]["t"] > 0.55:
 				explosions.remove_at(i)
+		# rocket smoke trails
+		_trail_t -= delta
+		if _trail_t <= 0.0:
+			_trail_t = 0.025
+			for b in game.bullets:
+				if b["w"] == "rocket":
+					var dir: Vector2 = (b["vel"] as Vector2).normalized()
+					puff((b["pos"] as Vector2) - dir * 14.0, -dir * 30.0 + Vector2(randf_range(-15, 15), randf_range(-15, 15)), randf_range(7, 11), 0.6, Color(0.55, 0.55, 0.58))
+		queue_redraw()
+		glow.queue_redraw()
+
+	func _draw() -> void:
+		# smoke (normal blend)
+		var tex := FXKit.soft_circle()
+		for pf in puffs:
+			var f: float = pf["t"] / pf["life"]
+			var r: float = pf["r"] * (0.6 + f * 1.1)
+			var c: Color = pf["col"]
+			c.a = 0.55 * (1.0 - f)
+			draw_texture_rect(tex, Rect2((pf["pos"] as Vector2) - Vector2(r, r), Vector2(r, r) * 2.0), false, c)
+		# rocket bodies
+		for b in game.bullets:
+			if b["w"] == "rocket":
+				var dir: Vector2 = (b["vel"] as Vector2).normalized()
+				var p: Vector2 = b["pos"]
+				draw_set_transform(p, dir.angle(), Vector2.ONE)
+				draw_rect(Rect2(-12, -3.5, 16, 7), Color(0.35, 0.4, 0.3))
+				draw_colored_polygon(PackedVector2Array([Vector2(4, -3.5), Vector2(10, 0), Vector2(4, 3.5)]), Color(0.75, 0.2, 0.15))
+				draw_colored_polygon(PackedVector2Array([Vector2(-12, -3.5), Vector2(-15, -7), Vector2(-9, -3.5)]), Color(0.25, 0.28, 0.22))
+				draw_colored_polygon(PackedVector2Array([Vector2(-12, 3.5), Vector2(-15, 7), Vector2(-9, 3.5)]), Color(0.25, 0.28, 0.22))
+				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Additive glow layer: tracers, sparks, fire.
+class _Glow extends Node2D:
+	var fx: _FX
+
+	func _draw() -> void:
+		var tex := FXKit.soft_circle()
+		for b in fx.game.bullets:
+			var dir: Vector2 = (b["vel"] as Vector2).normalized()
+			var p: Vector2 = b["pos"]
+			match str(b["w"]):
+				"rocket":
+					var fl := p - dir * 14.0
+					draw_texture_rect(tex, Rect2(fl - Vector2(16, 16), Vector2(32, 32)), false, Color(1, 0.5, 0.1, 0.9))
+					draw_texture_rect(tex, Rect2(fl - Vector2(7, 7), Vector2(14, 14)), false, Color(1, 1, 0.8, 1))
+				"sniper":
+					draw_line(p - dir * 90.0, p, Color(0.4, 0.8, 1.0, 0.35), 7.0)
+					draw_line(p - dir * 90.0, p, Color(0.85, 0.95, 1.0, 0.95), 2.0)
+				_:
+					draw_line(p - dir * 26.0, p, Color(1, 0.6, 0.15, 0.35), 6.0)
+					draw_line(p - dir * 22.0, p, Color(1, 0.95, 0.7, 1.0), 2.0)
+					draw_texture_rect(tex, Rect2(p - Vector2(5, 5), Vector2(10, 10)), false, Color(1, 0.85, 0.4, 0.8))
+		for s in fx.sparks:
+			var c: Color = s["col"]
+			c.a = clampf(s["t"] * 3.0, 0.0, 1.0)
+			var v: Vector2 = s["vel"]
+			draw_line(s["pos"], (s["pos"] as Vector2) - v * 0.025, c, 2.5)
+		for e in fx.explosions:
+			var f: float = e["t"] / 0.55
+			var r: float = e["r"]
+			var pos: Vector2 = e["pos"]
+			var gr := r * (0.7 + f * 0.9)
+			draw_texture_rect(tex, Rect2(pos - Vector2(gr, gr) * 1.3, Vector2(gr, gr) * 2.6), false, Color(1, 0.45, 0.1, 0.9 * (1.0 - f)))
+			var cr := r * (0.35 + f * 0.4)
+			draw_texture_rect(tex, Rect2(pos - Vector2(cr, cr), Vector2(cr, cr) * 2.0), false, Color(1, 0.95, 0.7, 1.0 - f))
+			draw_arc(pos, r * (0.3 + f * 1.2), 0.0, TAU, 40, Color(1, 0.8, 0.5, 0.6 * (1.0 - f)), 4.0 * (1.0 - f) + 1.0)
+
+
+## Medkits and ammo crates.
+class _Pickups extends Node2D:
+	var game: Node
+	var icons := {}
+
+	func _ready() -> void:
+		icons["medkit"] = load("res://assets/icons/medkit.png")
+		icons["ammo"] = load("res://assets/icons/ammo_crate.png")
+
+	func _process(_d: float) -> void:
 		queue_redraw()
 
 	func _draw() -> void:
-		for b in game.bullets:
-			var dir: Vector2 = (b["vel"] as Vector2).normalized()
-			var p: Vector2 = b["pos"]
-			if b["w"] == "rocket":
-				draw_circle(p, 6.0, Color(0.9, 0.9, 0.9))
-				draw_circle(p - dir * 9.0, 5.0, Color(1, 0.6, 0.1, 0.9))
-				draw_circle(p - dir * 18.0, 7.0, Color(0.6, 0.6, 0.6, 0.35))
-			elif b["w"] == "sniper":
-				draw_line(p - dir * 60.0, p, Color(1, 1, 0.8, 0.9), 2.5)
-			else:
-				draw_line(p - dir * 18.0, p, Color(1, 0.9, 0.5, 0.95), 2.0)
-		for s in sparks:
-			var c: Color = s["col"]
-			c.a = clampf(s["t"] * 3.0, 0.0, 1.0)
-			draw_rect(Rect2((s["pos"] as Vector2) - Vector2(2, 2), Vector2(4, 4)), c)
-		for e in explosions:
-			var f: float = e["t"] / 0.45
-			var r: float = e["r"] * (0.4 + f * 0.8)
-			draw_circle(e["pos"], r, Color(1, 0.55, 0.15, 0.55 * (1.0 - f)))
-			draw_circle(e["pos"], r * 0.55, Color(1, 0.95, 0.6, 0.8 * (1.0 - f)))
+		var t := Time.get_ticks_msec() / 1000.0
+		var glow := FXKit.soft_circle()
+		for i in game.pickups.size():
+			var pk: Dictionary = game.pickups[i]
+			var base: Vector2 = pk["pos"]
+			draw_set_transform(base + Vector2(0, 16), 0.0, Vector2(1, 0.25))
+			draw_circle(Vector2.ZERO, 20.0, Color(0, 0, 0, 0.35 if pk["active"] else 0.15))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			if not pk["active"]:
+				continue
+			var bob := sin(t * 3.0 + i) * 4.0
+			var c := Color(0.3, 1.0, 0.45, 0.45) if pk["kind"] == "medkit" else Color(1.0, 0.8, 0.25, 0.45)
+			var gs := 34.0 + sin(t * 4.0 + i) * 4.0
+			draw_texture_rect(glow, Rect2(base + Vector2(-gs, -gs + bob - 4), Vector2(gs, gs) * 2.0), false, c)
+			var tex: Texture2D = icons[pk["kind"]]
+			var w := 46.0
+			var h := w * tex.get_height() / tex.get_width()
+			draw_texture_rect(tex, Rect2(base + Vector2(-w * 0.5, -h * 0.5 + bob - 4), Vector2(w, h)), false)
 
 
 # ================================================================ setup
@@ -139,7 +313,7 @@ func _ready() -> void:
 	for id in ids:
 		_spawn_player(int(id), Network.players[id])
 	camera = Camera2D.new()
-	camera.zoom = Vector2(1.1, 1.1) if Profile.use_touch_controls() else Vector2(1.0, 1.0)
+	camera.zoom = Vector2(1.3, 1.3) if Profile.use_touch_controls() else Vector2(1.15, 1.15)
 	camera.limit_left = -150
 	camera.limit_top = -250
 	camera.limit_right = int(map["size"].x) + 150
@@ -165,10 +339,19 @@ func _ready() -> void:
 
 
 func _build_world() -> void:
+	var bd := _Backdrop.new(str(map.get("bg_image", "outpost")))
+	bd.game = self
+	add_child(bd)
 	var md := _MapDraw.new()
 	md.map = map
 	md.z_index = -10
 	add_child(md)
+	_build_pickups()
+	var pk := _Pickups.new()
+	pk.game = self
+	pk.z_index = -5
+	add_child(pk)
+	_add_vignette()
 	var body := StaticBody2D.new()
 	body.name = "Walls"
 	body.collision_layer = 1
@@ -186,6 +369,92 @@ func _build_world() -> void:
 		cs.shape = sh
 		cs.position = Vector2(r[0], r[1]) + sh.size * 0.5
 		body.add_child(cs)
+
+
+func _add_vignette() -> void:
+	var cl := CanvasLayer.new()
+	cl.layer = 1
+	var g := Gradient.new()
+	g.set_color(0, Color(0, 0, 0, 0))
+	g.set_color(1, Color(0, 0, 0, 0.55))
+	g.add_point(0.6, Color(0, 0, 0, 0))
+	var gt := GradientTexture2D.new()
+	gt.gradient = g
+	gt.fill = GradientTexture2D.FILL_RADIAL
+	gt.fill_from = Vector2(0.5, 0.5)
+	gt.fill_to = Vector2(1.05, 0.5)
+	var tr := TextureRect.new()
+	tr.texture = gt
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_SCALE
+	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cl.add_child(tr)
+	add_child(cl)
+
+
+## Pickup spots are derived from the map so every peer computes the same list.
+func _build_pickups() -> void:
+	pickups.clear()
+	var n := 0
+	var rects: Array = map["rects"]
+	for i in rects.size():
+		var r: Array = rects[i]
+		if float(r[2]) >= 300.0 and float(r[3]) == 40.0:
+			n += 1
+			if n % 2 == 1:
+				continue
+			var kind := "medkit" if (n / 2) % 2 == 1 else "ammo"
+			pickups.append({"pos": Vector2(float(r[0]) + float(r[2]) * 0.5, float(r[1]) - 22.0), "kind": kind, "active": true, "t": 0.0})
+
+
+func _server_pickups(delta: float) -> void:
+	for i in pickups.size():
+		var pk: Dictionary = pickups[i]
+		if not pk["active"]:
+			pk["t"] -= delta
+			if pk["t"] <= 0.0:
+				_all("_net_pickup_back", [i])
+			continue
+		for p in get_players():
+			if not p.alive or p.global_position.distance_to(pk["pos"]) > 42.0:
+				continue
+			var need := false
+			if pk["kind"] == "medkit":
+				need = p.hp < p.max_hp
+			else:
+				need = p.ammo[0] < p.mag_of(p.weapons[0]) or p.ammo[1] < p.mag_of(p.weapons[1])
+			if need:
+				pk["t"] = Catalog.PICKUP_RESPAWN
+				_all("_net_pickup", [i, p.peer_id])
+				break
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_pickup(i: int, pid: int) -> void:
+	if i < 0 or i >= pickups.size():
+		return
+	var pk: Dictionary = pickups[i]
+	pk["active"] = false
+	pk["t"] = Catalog.PICKUP_RESPAWN
+	var p := get_player(pid)
+	if p:
+		if pk["kind"] == "medkit":
+			p.hp = mini(p.max_hp, p.hp + Catalog.PICKUP_HEAL)
+			fx.spark(pk["pos"], Color(0.4, 1.0, 0.5), 14, 260.0)
+		else:
+			p.ammo = [p.mag_of(p.weapons[0]), p.mag_of(p.weapons[1])]
+			p.reloading = 0.0
+			fx.spark(pk["pos"], Color(1.0, 0.85, 0.3), 14, 260.0)
+		if pid == multiplayer.get_unique_id():
+			Sfx.play("buy", 0.6, 0.0)
+			hud.show_center("+%d HP" % Catalog.PICKUP_HEAL if pk["kind"] == "medkit" else "AMMO FULL", 0.8)
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_pickup_back(i: int) -> void:
+	if i >= 0 and i < pickups.size():
+		pickups[i]["active"] = true
 
 
 func _spawn_player(id: int, info: Dictionary) -> void:
@@ -594,7 +863,7 @@ func _net_death(vid: int, killer_id: int, weapon_id: String, s: Dictionary, ts: 
 	var v := get_player(vid)
 	var k := get_player(killer_id)
 	if v:
-		fx.spark(v.global_position, v.body_color, 22, 420.0)
+		fx.burst(v.global_position, v.body_color)
 		Sfx.play_at("death", v.global_position, listener_pos(), 0.8)
 		v.do_die()
 	var vname := str(Network.players.get(vid, {}).get("name", "?"))
@@ -634,6 +903,7 @@ func _server_tick(delta: float) -> void:
 			var p := get_player(int(id))
 			if p:
 				_all("_net_respawn", [int(id), _pick_spawn(p)])
+	_server_pickups(delta)
 	# fell out of the map
 	var limit_y: float = map["size"].y + 150.0
 	for p in get_players():

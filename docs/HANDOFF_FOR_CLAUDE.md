@@ -20,7 +20,9 @@ autoload/
   monetization.gd        facade for rewarded ads + Play Billing (plugins detected at runtime)
   sfx.gd                 procedural sound effects
 scripts/                 player.gd, game.gd (host-authoritative combat), hud.gd, touch_controls.gd,
-                         lobby.gd, main_menu.gd, shop.gd, gun_art.gd, ui_kit.gd, widgets.gd
+                         lobby.gd, main_menu.gd, shop.gd, gun_art.gd, ui_kit.gd, widgets.gd, fx_kit.gd
+shaders/                 gun_skin.gdshader (skin patterns on gun sprites), tint.gdshader
+assets/                  bg/ (parallax backdrops), tex/ (platform textures), guns/, char/, icons/, ui/, fonts/
 scenes/                  main_menu.tscn, lobby.tscn, game.tscn (UI is built in code)
 tests/                   test_runner.gd, screenshots.gd, run_tests.sh  (excluded from export)
 docs/                    this file + Persian proposal (excluded from export)
@@ -92,3 +94,13 @@ see `SIMULATE_IN_EDITOR`).
 - Using Godot 4.3 or 4.5+ may produce warnings; stick to 4.4.1.
 - If UI appears empty on device, ensure you did not replace `set_anchors_and_offsets_preset` calls.
 - Windows firewall blocks LAN tests on PC; phones on the same Wi‑Fi/hotspot are fine.
+
+## Visual / UI notes (v2)
+- UI kit: `scripts/ui_kit.gd` — glass buttons (9-patch StyleBoxTexture), panels, chips, toasts, `DragScroll`
+  (touch/mouse drag scrolling; it sets `UIKit.block_click_until` so a drag never triggers a buy).
+- Gun visuals: `scripts/gun_art.gd` — sprite per weapon in `assets/guns/<id>.png`, grip/muzzle data in `ART`,
+  skins applied by `shaders/gun_skin.gdshader` (pattern ids documented in catalog.gd).
+- Powers: `Catalog.POWERS`, levels in profile, sent to host with the lobby info; `player.gd` reads them via
+  `max_hp`, `fuel_mult`, `mag_of()`, `reload_of()` (host applies them, so clients cannot cheat locally).
+- Pickups (medkit/ammo) are host-authoritative in `game.gd` (`_server_pickups`, RPC `_net_pickup`).
+- Fonts: Lilita One (Latin) with Vazirmatn-Bold fallback, both OFL. Art is AI-generated for this project.

@@ -9,8 +9,9 @@ var _join_status: Label
 
 func _ready() -> void:
 	get_tree().paused = false
-	var root := UIKit.screen_root(self)
-	_content = VBoxContainer.new()
+	var root := UIKit.screen_root(self, "menu", 0.18)
+	_content = Control.new()
+	_content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(_content)
 	_show_home()
 	if Network.last_message != "":
@@ -34,81 +35,118 @@ func _clear() -> void:
 	UIKit.clear(_content)
 
 
+## Page with a title bar + BACK button; returns the body container.
+func _page(title: String) -> VBoxContainer:
+	_clear()
+	var v := VBoxContainer.new()
+	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_content.add_child(v)
+	var head := HBoxContainer.new()
+	head.add_child(UIKit.glass_button("BACK", "dark", _show_home, Vector2(140, 58)))
+	head.add_child(UIKit.spacer(0, 10))
+	var t := UIKit.label(title, 40, UIKit.ACCENT2)
+	t.add_theme_constant_override("outline_size", 8)
+	head.add_child(t)
+	head.add_child(UIKit.hfill())
+	head.add_child(UIKit.wallet_chips())
+	v.add_child(head)
+	return v
+
+
 # ================================================================ home
 func _show_home() -> void:
 	_clear()
-	var row := HBoxContainer.new()
-	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	row.add_theme_constant_override("separation", 30)
-	_content.add_child(row)
-
-	var left := VBoxContainer.new()
-	left.custom_minimum_size = Vector2(440, 0)
-	left.add_theme_constant_override("separation", 12)
-	row.add_child(left)
-	var title := UIKit.label("MINI FIRE", 64, UIKit.ACCENT)
-	title.add_theme_color_override("font_outline_color", Color("6b1d00"))
-	title.add_theme_constant_override("outline_size", 10)
-	left.add_child(title)
-	left.add_child(UIKit.label("Jetpack LAN battles", 18, UIKit.MUTED))
-	left.add_child(UIKit.spacer(6))
-	left.add_child(UIKit.accent_button("HOST WI-FI GAME", _on_host, 420))
-	left.add_child(UIKit.button("JOIN WI-FI GAME", _show_join, 420))
-	left.add_child(UIKit.button("PRACTICE VS BOTS", Network.host_practice, 420))
-	var hb := HBoxContainer.new()
-	hb.add_child(UIKit.button("SHOP", _open_shop, 205))
-	hb.add_child(UIKit.button("SETTINGS", _show_settings, 205))
-	left.add_child(hb)
-
-	var right := UIKit.panel()
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(right)
-	var rv := VBoxContainer.new()
-	right.add_child(rv)
+	# --- top bar: profile chip (left) + wallet (right)
 	var top := HBoxContainer.new()
-	top.add_child(UIKit.label("PROFILE", 24, UIKit.ACCENT2))
+	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	top.offset_bottom = 60
+	_content.add_child(top)
+	var who := UIKit.glass_button("  " + Profile.player_name, "dark", _show_settings, Vector2(0, 54), 22)
+	who.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	who.icon = preload("res://assets/char/head.png")
+	who.expand_icon = true
+	who.add_theme_constant_override("icon_max_width", 34)
+	who.custom_minimum_size = Vector2(220, 54)
+	top.add_child(who)
 	top.add_child(UIKit.hfill())
-	top.add_child(UIKit.wallet_label())
-	rv.add_child(top)
-	var name_edit := LineEdit.new()
-	name_edit.text = Profile.player_name
-	name_edit.max_length = 16
-	name_edit.placeholder_text = "Your name"
-	name_edit.custom_minimum_size = Vector2(0, 50)
-	name_edit.text_changed.connect(func(t: String):
-		var clean := t.strip_edges()
-		if clean != "":
-			Profile.player_name = clean
-			Profile.save_profile())
-	rv.add_child(name_edit)
-	rv.add_child(UIKit.label("Color", 16, UIKit.MUTED))
-	rv.add_child(Widgets.color_row(Profile.color_index, func(i: int):
-		Profile.color_index = i
-		Profile.save_profile()
-		_show_home()))
-	rv.add_child(UIKit.label("Primary weapon", 16, UIKit.MUTED))
-	var wrow := HFlowContainer.new()
-	wrow.add_theme_constant_override("h_separation", 8)
-	wrow.add_theme_constant_override("v_separation", 8)
-	for w in Catalog.PRIMARY_WEAPONS:
-		var wid: String = w
-		var b := UIKit.button(Catalog.weapon(wid)["name"], func():
-			Profile.primary_weapon = wid
-			Profile.save_profile()
-			_show_home(), 0, 18)
-		if wid == Profile.primary_weapon:
-			b.add_theme_stylebox_override("normal", UIKit._box(UIKit.PANEL2, 10, 2, UIKit.ACCENT))
-			b.add_theme_color_override("font_color", UIKit.ACCENT2)
-		wrow.add_child(b)
-	rv.add_child(wrow)
-	var prev := Widgets.GunPreview.new()
+	top.add_child(UIKit.wallet_chips())
+
+	# --- center: logo + big glass buttons
+	var center := VBoxContainer.new()
+	center.set_anchors_preset(Control.PRESET_CENTER)
+	center.add_theme_constant_override("separation", 14)
+	center.alignment = BoxContainer.ALIGNMENT_CENTER
+	center.custom_minimum_size = Vector2(440, 0)
+	center.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	center.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_content.add_child(center)
+	var logo := TextureRect.new()
+	logo.texture = preload("res://assets/ui/logo.png")
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	logo.custom_minimum_size = Vector2(440, 160)
+	logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(logo)
+	center.add_child(UIKit.glass_button("PRACTICE VS BOTS", "green", Network.host_practice, Vector2(420, 78), 30))
+	center.add_child(UIKit.glass_button("HOST WI-FI GAME", "orange", _on_host, Vector2(420, 78), 30))
+	center.add_child(UIKit.glass_button("JOIN WI-FI GAME", "blue", _show_join, Vector2(420, 78), 30))
+	for c in center.get_children():
+		c.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	center.add_child(UIKit.spacer(30))
+
+	# --- right column: small shop / powers / settings buttons
+	var right := VBoxContainer.new()
+	right.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+	right.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	right.grow_vertical = Control.GROW_DIRECTION_BOTH
+	right.add_theme_constant_override("separation", 8)
+	_content.add_child(right)
+	right.add_child(UIKit.icon_button("gold_crate", "SHOP", "yellow", func(): _open_shop("skins"), 82))
+	right.add_child(UIKit.icon_button("armor", "POWERS", "purple", func(): _open_shop("powers"), 82))
+	right.add_child(UIKit.icon_button("gear", "SETTINGS", "dark", _show_settings, 82))
+
+	# --- left: loadout card
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UIKit.glass_panel())
+	card.set_anchors_preset(Control.PRESET_CENTER_LEFT)
+	card.grow_vertical = Control.GROW_DIRECTION_BOTH
+	card.custom_minimum_size = Vector2(300, 0)
+	_content.add_child(card)
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 8)
+	card.add_child(lv)
+	lv.add_child(UIKit.label("LOADOUT", 24, UIKit.ACCENT2, HORIZONTAL_ALIGNMENT_CENTER))
+	var prev := Widgets.CharacterPreview.new()
+	prev.custom_minimum_size = Vector2(250, 150)
+	prev.color = Catalog.color_by_index(Profile.color_index)
 	prev.weapon_id = Profile.primary_weapon
 	prev.skin_id = Profile.skin_for(Profile.primary_weapon)
-	prev.custom_minimum_size = Vector2(0, 130)
-	prev.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	rv.add_child(prev)
+	lv.add_child(prev)
+	var wrow := HBoxContainer.new()
+	wrow.alignment = BoxContainer.ALIGNMENT_CENTER
+	wrow.add_child(UIKit.glass_button("<", "blue", func(): _cycle_weapon(-1), Vector2(52, 52), 26))
+	var wl := UIKit.label(str(Catalog.weapon(Profile.primary_weapon)["name"]), 24, UIKit.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	wl.custom_minimum_size = Vector2(130, 0)
+	wl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	wrow.add_child(wl)
+	wrow.add_child(UIKit.glass_button(">", "blue", func(): _cycle_weapon(1), Vector2(52, 52), 26))
+	lv.add_child(wrow)
+	var colors := Widgets.color_row(Profile.color_index, func(i: int):
+		Profile.color_index = i
+		Profile.save_profile()
+		_show_home(), 34)
+	colors.alignment = FlowContainer.ALIGNMENT_CENTER
+	lv.add_child(colors)
 	var kd := float(Profile.total_kills) / maxf(1.0, float(Profile.total_deaths))
-	rv.add_child(UIKit.label("Matches %d   Wins %d   Kills %d   K/D %.2f" % [Profile.matches_played, Profile.wins, Profile.total_kills, kd], 16, UIKit.MUTED))
+	lv.add_child(UIKit.label("Wins %d   Kills %d   K/D %.2f" % [Profile.wins, Profile.total_kills, kd], 16, UIKit.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+
+
+func _cycle_weapon(dir: int) -> void:
+	var list: Array = Catalog.PRIMARY_WEAPONS
+	var i := list.find(Profile.primary_weapon)
+	Profile.primary_weapon = list[(i + dir + list.size()) % list.size()]
+	Profile.save_profile()
+	_show_home()
 
 
 func _on_host() -> void:
@@ -117,33 +155,34 @@ func _on_host() -> void:
 		UIKit.toast(self, "Could not host (port %d busy?)" % Network.PORT, UIKit.BAD)
 
 
-func _open_shop() -> void:
+func _open_shop(tab: String = "skins") -> void:
 	var s := ShopPanel.new()
+	s.start_tab = tab
 	s.closed.connect(_show_home)
 	add_child(s)
 
 
 # ================================================================ join
 func _show_join() -> void:
-	_clear()
-	var head := HBoxContainer.new()
-	head.add_child(UIKit.label("JOIN WI-FI GAME", 34, UIKit.ACCENT))
-	head.add_child(UIKit.hfill())
-	head.add_child(UIKit.button("BACK", _show_home, 140))
-	_content.add_child(head)
+	var page := _page("JOIN WI-FI GAME")
 	var ips := Network.local_ips()
-	_content.add_child(UIKit.label("Be on the same Wi-Fi (or hotspot) as the host. Your IP: %s" % (", ".join(ips) if ips.size() > 0 else "not connected"), 16, UIKit.MUTED))
+	page.add_child(UIKit.label("Be on the same Wi-Fi (or hotspot) as the host. Your IP: %s" % (", ".join(ips) if ips.size() > 0 else "not connected"), 16, UIKit.MUTED))
 	var row := HBoxContainer.new()
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_content.add_child(row)
+	page.add_child(row)
 	var lp := UIKit.panel()
 	lp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(lp)
 	var lv := VBoxContainer.new()
 	lp.add_child(lv)
 	lv.add_child(UIKit.label("Games found on your network", 20, UIKit.ACCENT2))
+	var sc := UIKit.DragScroll.new()
+	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	lv.add_child(sc)
 	_join_list = VBoxContainer.new()
-	lv.add_child(_join_list)
+	_join_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(_join_list)
 	_join_list.add_child(UIKit.label("Searching...", 18, UIKit.MUTED))
 	var rp := UIKit.panel()
 	rp.custom_minimum_size = Vector2(400, 0)
@@ -159,7 +198,7 @@ func _show_join() -> void:
 	_ip_edit.virtual_keyboard_type = LineEdit.KEYBOARD_TYPE_NUMBER_DECIMAL
 	_ip_edit.text_submitted.connect(func(_t): _join_ip(_ip_edit.text))
 	rv.add_child(_ip_edit)
-	rv.add_child(UIKit.accent_button("JOIN", func(): _join_ip(_ip_edit.text), 0))
+	rv.add_child(UIKit.glass_button("JOIN", "green", func(): _join_ip(_ip_edit.text), Vector2(0, 64), 28))
 	_join_status = UIKit.label("", 16, UIKit.MUTED)
 	_join_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rv.add_child(_join_status)
@@ -178,7 +217,7 @@ func _on_hosts_updated(hosts: Array) -> void:
 		var txt := "%s   %d/%d   %s" % [h["name"], int(h["players"]), int(h["max"]), Catalog.MODE_NAMES[clampi(int(h["mode"]), 0, 1)]]
 		if int(h["v"]) != Catalog.GAME_VERSION:
 			txt += "   (different version)"
-		var b := UIKit.button(txt, func(): _join_ip(ip), 0, 18)
+		var b := UIKit.glass_button(txt, "blue", func(): _join_ip(ip), Vector2(0, 60), 20)
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		_join_list.add_child(b)
 
@@ -205,42 +244,71 @@ func _on_connection_failed(reason: String) -> void:
 
 # ================================================================ settings
 func _show_settings() -> void:
-	_clear()
-	var head := HBoxContainer.new()
-	head.add_child(UIKit.label("SETTINGS", 34, UIKit.ACCENT))
-	head.add_child(UIKit.hfill())
-	head.add_child(UIKit.button("BACK", _show_home, 140))
-	_content.add_child(head)
-	var p := UIKit.panel()
-	_content.add_child(p)
+	var page := _page("SETTINGS")
+	var row := HBoxContainer.new()
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 16)
+	page.add_child(row)
+	# profile
+	var p1 := UIKit.panel()
+	p1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(p1)
+	var v1 := VBoxContainer.new()
+	p1.add_child(v1)
+	v1.add_child(UIKit.label("PLAYER NAME", 24, UIKit.ACCENT2))
+	var name_edit := LineEdit.new()
+	name_edit.text = Profile.player_name
+	name_edit.max_length = 16
+	name_edit.placeholder_text = "Your name"
+	name_edit.custom_minimum_size = Vector2(0, 58)
+	name_edit.add_theme_font_size_override("font_size", 26)
+	v1.add_child(name_edit)
+	var save := func():
+		var clean := name_edit.text.strip_edges()
+		if clean == "":
+			UIKit.toast(self, "Name cannot be empty", UIKit.BAD)
+			return
+		Profile.player_name = clean
+		Profile.save_profile()
+		UIKit.toast(self, "Name saved", UIKit.GOOD)
+	name_edit.text_submitted.connect(func(_t): save.call())
+	v1.add_child(UIKit.glass_button("SAVE NAME", "green", save, Vector2(0, 60), 24))
+	v1.add_child(UIKit.spacer(8))
+	v1.add_child(UIKit.label("COLOR", 20, UIKit.ACCENT2))
+	v1.add_child(Widgets.color_row(Profile.color_index, func(i: int):
+		Profile.color_index = i
+		Profile.save_profile(), 40))
+	v1.add_child(UIKit.label("Matches %d   Wins %d   Kills %d" % [Profile.matches_played, Profile.wins, Profile.total_kills], 16, UIKit.MUTED))
+	# game
+	var p2 := UIKit.panel()
+	p2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(p2)
 	var v := VBoxContainer.new()
-	p.add_child(v)
-	v.add_child(UIKit.label("Sound volume", 20))
+	p2.add_child(v)
+	v.add_child(UIKit.label("SOUND VOLUME", 20, UIKit.ACCENT2))
 	var sl := HSlider.new()
 	sl.min_value = 0.0
 	sl.max_value = 1.0
 	sl.step = 0.05
 	sl.value = Profile.sfx_volume
-	sl.custom_minimum_size = Vector2(400, 40)
+	sl.custom_minimum_size = Vector2(300, 44)
 	sl.value_changed.connect(func(val: float):
 		Profile.sfx_volume = val
 		Profile.save_profile()
 		Sfx.play("ui", 1.0, 0.0))
 	v.add_child(sl)
-	v.add_child(UIKit.label("Touch controls", 20))
+	v.add_child(UIKit.label("TOUCH CONTROLS", 20, UIKit.ACCENT2))
 	var opts := HBoxContainer.new()
-	var names := ["AUTO", "ALWAYS ON", "OFF"]
+	var names := ["AUTO", "ON", "OFF"]
 	for i in 3:
 		var idx := i
-		var b := UIKit.button(names[i], func():
+		opts.add_child(UIKit.glass_button(names[i], "orange" if i == Profile.touch_controls else "dark", func():
 			Profile.touch_controls = idx
 			Profile.save_profile()
-			_show_settings(), 160, 18)
-		if i == Profile.touch_controls:
-			b.add_theme_stylebox_override("normal", UIKit._box(UIKit.PANEL2, 10, 2, UIKit.ACCENT))
-		opts.add_child(b)
+			_show_settings(), Vector2(110, 56), 20))
 	v.add_child(opts)
-	v.add_child(UIKit.spacer(10))
-	v.add_child(UIKit.label("PC controls: A/D move, W or Space jetpack, mouse aim + left click fire,\nR reload, Q / right click / wheel switch weapon, Tab scoreboard, Esc pause.", 16, UIKit.MUTED))
-	v.add_child(UIKit.label("Phone: left stick moves (push up = jetpack), right stick aims and fires.", 16, UIKit.MUTED))
+	v.add_child(UIKit.spacer(6))
+	var help := UIKit.label("Phone: left stick moves (push up = jetpack), right stick aims and fires.\nPC: A/D move, W/Space jetpack, mouse aim + click fire, R reload, Q switch, Tab score, Esc pause.", 15, UIKit.MUTED)
+	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(help)
 	v.add_child(UIKit.label("Mini Fire v%s" % ProjectSettings.get_setting("application/config/version", "1.0.0"), 14, UIKit.MUTED))

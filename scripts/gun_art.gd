@@ -1,93 +1,93 @@
 class_name GunArt
 extends RefCounted
-## Procedural vector art for guns + skins. Used in-game and in the shop preview.
-## All shapes are drawn pointing to +X, with the grip at the origin.
+## Gun sprites + skins. Guns are hand-painted PNGs (assets/guns) recolored by
+## shaders/gun_skin.gdshader. Coordinates: +X is the aim direction, origin is the shoulder.
+
+const SHADER := preload("res://shaders/gun_skin.gdshader")
+
+## Per weapon: display width (px in world), hand grip and fore-grip in texture pixels,
+## muzzle Y in texture pixels. Textures are 512 px wide.
+const ART := {
+	"pistol": {"w": 40.0, "grip": Vector2(92, 150), "fore": Vector2(-1, -1), "muzzle_y": 55.0},
+	"smg": {"w": 54.0, "grip": Vector2(228, 128), "fore": Vector2(400, 60), "muzzle_y": 60.5},
+	"rifle": {"w": 84.0, "grip": Vector2(150, 88), "fore": Vector2(340, 66), "muzzle_y": 40.0},
+	"shotgun": {"w": 84.0, "grip": Vector2(128, 72), "fore": Vector2(360, 46), "muzzle_y": 18.0},
+	"sniper": {"w": 100.0, "grip": Vector2(118, 88), "fore": Vector2(300, 60), "muzzle_y": 50.5},
+	"rocket": {"w": 88.0, "grip": Vector2(240, 112), "fore": Vector2(355, 112), "muzzle_y": 67.5},
+}
+const TEX_W := 512.0
+const MUZZLE_PX := 509.0
+const HAND_X := 8.0  # where the hand sits in front of the shoulder
+
+static var _tex_cache: Dictionary = {}
 
 
-## Draws a gun on `ci` (a CanvasItem inside its _draw()).
-## scale_f scales the whole gun; t is time in seconds (animated skins).
-static func draw_gun(ci: CanvasItem, weapon_id: String, skin_id: String, scale_f: float = 1.0, t: float = 0.0) -> void:
-	var s: Dictionary = Catalog.skin(skin_id)
-	var base: Color = s["base"]
-	var accent: Color = s["accent"]
-	var pattern: String = s["pattern"]
-	var w: Dictionary = Catalog.weapon(weapon_id)
-	var L: float = float(w["length"]) * scale_f
-	var H: float = 7.0 * scale_f
-	var parts: Array = []  # list of Rect2 (body parts)
-	match weapon_id:
-		"pistol":
-			parts = [Rect2(-2 * scale_f, -H * 0.5, L, H), Rect2(-2 * scale_f, 0, 7 * scale_f, 10 * scale_f)]
-		"smg":
-			parts = [Rect2(-4 * scale_f, -H * 0.5, L, H), Rect2(4 * scale_f, 0, 6 * scale_f, 13 * scale_f),
-				Rect2(-4 * scale_f, 0, 5 * scale_f, 8 * scale_f)]
-		"rifle":
-			parts = [Rect2(-14 * scale_f, -H * 0.5, L * 0.8, H), Rect2(L * 0.62 - 14 * scale_f, -2 * scale_f, L * 0.45, 4 * scale_f),
-				Rect2(6 * scale_f, 1 * scale_f, 6 * scale_f, 13 * scale_f), Rect2(-14 * scale_f, -2 * scale_f, 8 * scale_f, 9 * scale_f)]
-		"shotgun":
-			parts = [Rect2(-14 * scale_f, -H * 0.5, L, H * 1.1), Rect2(-14 * scale_f, -2 * scale_f, 10 * scale_f, 10 * scale_f),
-				Rect2(8 * scale_f, H * 0.5, 16 * scale_f, 4 * scale_f)]
-		"sniper":
-			parts = [Rect2(-16 * scale_f, -H * 0.45, L * 0.65, H * 0.9), Rect2(L * 0.5 - 16 * scale_f, -1.5 * scale_f, L * 0.55, 3 * scale_f),
-				Rect2(2 * scale_f, -H * 0.5 - 6 * scale_f, 18 * scale_f, 5 * scale_f), Rect2(-16 * scale_f, -2 * scale_f, 9 * scale_f, 10 * scale_f)]
-		"rocket":
-			parts = [Rect2(-18 * scale_f, -H * 0.85, L, H * 1.7), Rect2(0, H * 0.8, 6 * scale_f, 9 * scale_f)]
-		_:
-			parts = [Rect2(0, -H * 0.5, L, H)]
-	for r in parts:
-		ci.draw_rect(r, base)
-	# pattern overlay on the main body (first part)
-	var body: Rect2 = parts[0]
-	match pattern:
-		"stripes":
-			var step := 7.0 * scale_f
-			var x := body.position.x + 2.0
-			while x < body.end.x - 2.0:
-				ci.draw_line(Vector2(x, body.position.y), Vector2(x + 3.0 * scale_f, body.end.y), accent, 2.0 * scale_f)
-				x += step
-		"camo":
-			var seed_v := weapon_id.hash()
-			for i in 6:
-				var fx := float((seed_v >> (i * 3)) & 7) / 7.0
-				var fy := float((seed_v >> (i * 2 + 1)) & 3) / 3.0
-				var p := body.position + Vector2(body.size.x * (0.1 + 0.8 * fx), body.size.y * fy)
-				ci.draw_circle(p, 2.6 * scale_f, accent)
-		"carbon":
-			var y := body.position.y + 1.5
-			while y < body.end.y:
-				ci.draw_line(Vector2(body.position.x, y), Vector2(body.end.x, y), accent, 1.0)
-				y += 2.5 * scale_f
-		"gold":
-			var shine_x := body.position.x + fposmod(t * 60.0 * scale_f, body.size.x + 20.0) - 10.0
-			ci.draw_line(Vector2(shine_x, body.position.y), Vector2(shine_x + 5.0 * scale_f, body.end.y), Color(1, 1, 0.85, 0.85), 3.0 * scale_f)
-			ci.draw_rect(body, accent, false, 1.2 * scale_f)
-		"neon":
-			var a := 0.55 + 0.45 * sin(t * 5.0)
-			var glow := Color(accent.r, accent.g, accent.b, a)
-			ci.draw_rect(body.grow(1.5 * scale_f), glow, false, 2.0 * scale_f)
-			ci.draw_line(Vector2(body.position.x, body.get_center().y), Vector2(body.end.x, body.get_center().y), glow, 1.5 * scale_f)
-		_:
-			ci.draw_rect(body, accent, false, 1.0)
-	# muzzle tip
-	var tip := muzzle_offset(weapon_id) * scale_f
-	ci.draw_rect(Rect2(tip.x - 3.0 * scale_f, -2.0 * scale_f, 3.0 * scale_f, 4.0 * scale_f), Color(0.08, 0.08, 0.1))
+static func texture(weapon_id: String) -> Texture2D:
+	if not _tex_cache.has(weapon_id):
+		var id := weapon_id if ART.has(weapon_id) else "pistol"
+		_tex_cache[weapon_id] = load("res://assets/guns/%s.png" % id)
+	return _tex_cache[weapon_id]
 
 
-## Muzzle position (unscaled) relative to the grip, along +X.
+static func art(weapon_id: String) -> Dictionary:
+	return ART.get(weapon_id, ART["pistol"])
+
+
+static func scale_of(weapon_id: String) -> float:
+	return float(art(weapon_id)["w"]) / TEX_W
+
+
+## Position (in shoulder space) where the sprite's top-left corner goes.
+static func sprite_offset(weapon_id: String) -> Vector2:
+	var a := art(weapon_id)
+	var s := scale_of(weapon_id)
+	var grip: Vector2 = a["grip"]
+	return Vector2(HAND_X - grip.x * s, -float(a["muzzle_y"]) * s)
+
+
+## Hand positions in shoulder space: [grip, fore-grip or null].
+static func hands(weapon_id: String) -> Array:
+	var a := art(weapon_id)
+	var s := scale_of(weapon_id)
+	var off := sprite_offset(weapon_id)
+	var res: Array = [off + (a["grip"] as Vector2) * s]
+	var f: Vector2 = a["fore"]
+	res.append(off + f * s if f.x >= 0.0 else null)
+	return res
+
+
+## Muzzle position (in shoulder space) along +X.
 static func muzzle_offset(weapon_id: String) -> Vector2:
-	var w: Dictionary = Catalog.weapon(weapon_id)
-	var L: float = float(w["length"])
-	match weapon_id:
-		"pistol":
-			return Vector2(L - 2.0, 0)
-		"smg":
-			return Vector2(L - 4.0, 0)
-		"rifle":
-			return Vector2(L * 0.62 - 14.0 + L * 0.45, 0)
-		"shotgun":
-			return Vector2(L - 14.0, 0)
-		"sniper":
-			return Vector2(L * 0.5 - 16.0 + L * 0.55, 0)
-		"rocket":
-			return Vector2(L - 18.0, 0)
-	return Vector2(L, 0)
+	var off := sprite_offset(weapon_id)
+	return Vector2(off.x + MUZZLE_PX * scale_of(weapon_id), 0.0)
+
+
+## New ShaderMaterial for a skin. Reuse it for the same sprite; call apply_skin to change.
+static func make_material(skin_id: String, weapon_id: String) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = SHADER
+	apply_skin(m, skin_id, weapon_id)
+	return m
+
+
+static func apply_skin(m: ShaderMaterial, skin_id: String, weapon_id: String) -> void:
+	var s: Dictionary = Catalog.skin(skin_id)
+	var tex := texture(weapon_id)
+	m.set_shader_parameter("pattern", int(s.get("pattern", 0)))
+	m.set_shader_parameter("base", s["base"])
+	m.set_shader_parameter("accent", s["accent"])
+	m.set_shader_parameter("accent2", s.get("accent2", s["accent"]))
+	m.set_shader_parameter("aspect", float(tex.get_width()) / float(tex.get_height()) * 0.5)
+
+
+## Configures a Sprite2D as the gun for weapon/skin, in shoulder space.
+static func setup_sprite(sp: Sprite2D, weapon_id: String, skin_id: String) -> void:
+	sp.texture = texture(weapon_id)
+	sp.centered = false
+	var s := scale_of(weapon_id)
+	sp.scale = Vector2(s, s)
+	sp.position = sprite_offset(weapon_id)
+	if sp.material is ShaderMaterial:
+		apply_skin(sp.material, skin_id, weapon_id)
+	else:
+		sp.material = make_material(skin_id, weapon_id)

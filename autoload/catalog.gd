@@ -2,7 +2,7 @@ extends Node
 ## Static game data: weapons, gun skins, player colors, maps and reward rules.
 ## Everything that a designer may want to tune lives here.
 
-const GAME_VERSION := 1
+const GAME_VERSION := 2
 
 # ---------------------------------------------------------------- weapons
 # damage: per bullet/pellet. fire_delay: seconds between shots.
@@ -47,28 +47,56 @@ const SECONDARY_WEAPON := "pistol"
 
 # ---------------------------------------------------------------- skins
 # currency: "mfc" (soft coin) or "gem". price 0 = free/default.
-# pattern: plain | stripes | camo | gold | neon | carbon
+# pattern ids are implemented in shaders/gun_skin.gdshader:
+#   0 factory 1 camo 2 tiger 3 carbon 4 ice 5 neon 6 blood 7 gold 8 galaxy 9 dragon 10 arctic
+# rarity: common | rare | epic | legend (card color in the shop)
 const SKINS := {
-	"default": {"name": "Factory", "currency": "mfc", "price": 0,
-		"base": Color("3a3f4b"), "accent": Color("1f2229"), "pattern": "plain"},
-	"desert": {"name": "Desert", "currency": "mfc", "price": 400,
-		"base": Color("c8a96b"), "accent": Color("8a6d3b"), "pattern": "camo"},
-	"forest": {"name": "Forest", "currency": "mfc", "price": 400,
-		"base": Color("4f6b3a"), "accent": Color("2c3d22"), "pattern": "camo"},
-	"tiger": {"name": "Tiger", "currency": "mfc", "price": 900,
-		"base": Color("ff8c1a"), "accent": Color("1a1a1a"), "pattern": "stripes"},
-	"carbon": {"name": "Carbon", "currency": "gem", "price": 25,
-		"base": Color("22252b"), "accent": Color("3c4250"), "pattern": "carbon"},
-	"ice": {"name": "Ice", "currency": "gem", "price": 40,
-		"base": Color("9fe7ff"), "accent": Color("ffffff"), "pattern": "stripes"},
-	"neon": {"name": "Neon", "currency": "gem", "price": 60,
-		"base": Color("12121a"), "accent": Color("39ff14"), "pattern": "neon"},
-	"blood": {"name": "Blood Moon", "currency": "gem", "price": 80,
-		"base": Color("5a0a12"), "accent": Color("ff2a3d"), "pattern": "neon"},
-	"gold": {"name": "Gold", "currency": "gem", "price": 150,
-		"base": Color("ffcc33"), "accent": Color("b8860b"), "pattern": "gold"},
+	"default": {"name": "Factory", "currency": "mfc", "price": 0, "rarity": "common", "pattern": 0,
+		"base": Color("8a8f99"), "accent": Color("2a2d33"), "accent2": Color("b0b4bc")},
+	"desert": {"name": "Desert", "currency": "mfc", "price": 400, "rarity": "common", "pattern": 1,
+		"base": Color("d9bf86"), "accent": Color("9a7442"), "accent2": Color("6e5330")},
+	"forest": {"name": "Forest", "currency": "mfc", "price": 400, "rarity": "common", "pattern": 1,
+		"base": Color("6f8f4a"), "accent": Color("3a5226"), "accent2": Color("2a2f1c")},
+	"tiger": {"name": "Tiger", "currency": "mfc", "price": 900, "rarity": "rare", "pattern": 2,
+		"base": Color("ff9a1f"), "accent": Color("1a1410"), "accent2": Color("ffd28a")},
+	"arctic": {"name": "Arctic", "currency": "mfc", "price": 1400, "rarity": "rare", "pattern": 10,
+		"base": Color("e8f0f8"), "accent": Color("8aa4bf"), "accent2": Color("c4d3e2")},
+	"carbon": {"name": "Carbon", "currency": "gem", "price": 25, "rarity": "rare", "pattern": 3,
+		"base": Color("1e2126"), "accent": Color("4a505c"), "accent2": Color("2e323a")},
+	"ice": {"name": "Ice", "currency": "gem", "price": 40, "rarity": "epic", "pattern": 4,
+		"base": Color("7fd8ff"), "accent": Color("e8fbff"), "accent2": Color("3aa0e0")},
+	"neon": {"name": "Neon", "currency": "gem", "price": 60, "rarity": "epic", "pattern": 5,
+		"base": Color("16161f"), "accent": Color("39ff6a"), "accent2": Color("00e5ff")},
+	"blood": {"name": "Blood Moon", "currency": "gem", "price": 80, "rarity": "epic", "pattern": 6,
+		"base": Color("3a060c"), "accent": Color("ff2a3d"), "accent2": Color("ff7a5a")},
+	"gold": {"name": "Gold", "currency": "gem", "price": 150, "rarity": "legend", "pattern": 7,
+		"base": Color("ffe27a"), "accent": Color("b07a10"), "accent2": Color("fff3c0")},
+	"galaxy": {"name": "Galaxy", "currency": "gem", "price": 220, "rarity": "legend", "pattern": 8,
+		"base": Color("120a3a"), "accent": Color("7a3cff"), "accent2": Color("ff4fd8")},
+	"dragon": {"name": "Dragon", "currency": "gem", "price": 300, "rarity": "legend", "pattern": 9,
+		"base": Color("2a0804"), "accent": Color("ff5a10"), "accent2": Color("ffd23a")},
 }
-const SKIN_ORDER := ["default", "desert", "forest", "tiger", "carbon", "ice", "neon", "blood", "gold"]
+const SKIN_ORDER := ["default", "desert", "forest", "tiger", "arctic", "carbon", "ice", "neon", "blood", "gold", "galaxy", "dragon"]
+const RARITY_COLORS := {"common": Color("a0aabb"), "rare": Color("46a0ff"), "epic": Color("be5aff"), "legend": Color("ffbe28")}
+
+# ---------------------------------------------------------------- powers (permanent upgrades, like Mini Militia perks)
+# Each level costs prices[level]. Effects are applied by the host at spawn time.
+const POWERS := {
+	"armor": {"name": "Armor", "icon": "armor", "desc": "+15 max health per level",
+		"currency": ["mfc", "mfc", "gem"], "prices": [500, 1200, 60]},
+	"jet": {"name": "Jet Fuel", "icon": "jet", "desc": "+20% jetpack fuel per level",
+		"currency": ["mfc", "mfc", "gem"], "prices": [400, 1000, 50]},
+	"ammo": {"name": "Big Mags", "icon": "ammo", "desc": "+20% magazine size per level",
+		"currency": ["mfc", "mfc", "gem"], "prices": [450, 1100, 50]},
+	"reload": {"name": "Fast Hands", "icon": "reload", "desc": "-12% reload time per level",
+		"currency": ["mfc", "mfc", "gem"], "prices": [450, 1100, 50]},
+}
+const POWER_ORDER := ["armor", "jet", "ammo", "reload"]
+const POWER_MAX := 3
+
+# pickups placed on the map (host-authoritative)
+const PICKUP_HEAL := 50
+const PICKUP_RESPAWN := 15.0
 
 # ---------------------------------------------------------------- players
 const PLAYER_COLORS := [
@@ -114,6 +142,7 @@ const MAPS := [
 		"size": Vector2(3200, 1800),
 		"bg": Color("1b2233"),
 		"solid": Color("3d4a5e"),
+		"bg_image": "outpost", "tex": "metal", "tex_tint": Color(1, 1, 1), "lip": Color("ffc83a"), "edge": Color("0e1420"),
 		"rects": [
 			[0, 1700, 3200, 100],
 			[200, 1450, 500, 40], [1000, 1500, 400, 40], [1800, 1500, 400, 40], [2500, 1450, 500, 40],
@@ -134,6 +163,7 @@ const MAPS := [
 		"size": Vector2(3600, 2000),
 		"bg": Color("2b1d18"),
 		"solid": Color("7a4b33"),
+		"bg_image": "canyon", "tex": "rock", "tex_tint": Color(1.0, 0.72, 0.55), "lip": Color("e8a050"), "edge": Color("2a1208"),
 		"rects": [
 			[0, 1900, 1200, 100], [1500, 1900, 600, 100], [2400, 1900, 1200, 100],
 			[1200, 1960, 300, 40], [2100, 1960, 300, 40],
@@ -165,3 +195,27 @@ func skin(id: String) -> Dictionary:
 
 func color_by_index(i: int) -> Color:
 	return PLAYER_COLORS[clampi(i, 0, PLAYER_COLORS.size() - 1)]
+
+
+## Power effects for a lobby info dictionary ({"powers": {"armor": 2, ...}}).
+func power_level(info: Dictionary, power_id: String) -> int:
+	var pw = info.get("powers", {})
+	if not pw is Dictionary:
+		return 0
+	return clampi(int(pw.get(power_id, 0)), 0, POWER_MAX)
+
+
+func max_health_for(info: Dictionary) -> int:
+	return MAX_HEALTH + 15 * power_level(info, "armor")
+
+
+func fuel_factor_for(info: Dictionary) -> float:
+	return 1.0 + 0.2 * power_level(info, "jet")
+
+
+func mag_for(info: Dictionary, weapon_id: String) -> int:
+	return int(round(float(weapon(weapon_id)["mag"]) * (1.0 + 0.2 * power_level(info, "ammo"))))
+
+
+func reload_for(info: Dictionary, weapon_id: String) -> float:
+	return float(weapon(weapon_id)["reload"]) * (1.0 - 0.12 * power_level(info, "reload"))

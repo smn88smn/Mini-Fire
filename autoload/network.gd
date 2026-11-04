@@ -235,7 +235,13 @@ func _sanitize(info: Dictionary) -> Dictionary:
 		for k in Catalog.WEAPONS.keys():
 			var sk := str(s_in.get(k, "default"))
 			skins[k] = sk if Catalog.SKINS.has(sk) else "default"
+	var powers := {}
+	var p_in = info.get("powers", {})
+	if p_in is Dictionary:
+		for k in Catalog.POWERS.keys():
+			powers[k] = clampi(int(p_in.get(k, 0)), 0, Catalog.POWER_MAX)
 	return {
+		"powers": powers,
 		"name": name_str,
 		"color": clampi(int(info.get("color", 0)), 0, Catalog.PLAYER_COLORS.size() - 1),
 		"weapon": w,
@@ -272,7 +278,7 @@ func _apply_info(id: int, changes: Dictionary) -> void:
 	if not players.has(id):
 		return
 	var merged: Dictionary = players[id].duplicate(true)
-	for k in ["name", "color", "weapon", "skins", "team"]:
+	for k in ["name", "color", "weapon", "skins", "powers", "team"]:
 		if changes.has(k):
 			merged[k] = changes[k]
 	var clean := _sanitize(merged)

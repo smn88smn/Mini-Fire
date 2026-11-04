@@ -35,6 +35,29 @@ func _run() -> void:
 	menu._open_shop()
 	await _wait(0.5)
 	await _shot("04_shop")
+	var shop: ShopPanel = null
+	for c in menu.get_children():
+		if c is ShopPanel:
+			shop = c
+	# drag-scroll the skins grid with the mouse (same code path as a finger)
+	var start := Vector2(800, 560)
+	_mouse_btn(start, true)
+	for i in 12:
+		await get_tree().process_frame
+		_mouse_move(start - Vector2(0, 30 * (i + 1)))
+	_mouse_btn(start - Vector2(0, 360), false)
+	await _wait(0.6)
+	await _shot("04b_shop_scrolled")
+	shop._tab = "powers"
+	shop._refresh()
+	await _wait(0.3)
+	await _shot("04c_powers")
+	shop._tab = "gems"
+	shop._refresh()
+	await _wait(0.3)
+	await _shot("04d_gems")
+	shop._close()
+	await _wait(0.3)
 	Network.host_practice()
 	await _wait(1.0)
 	Network.set_setting("mode", 1)
@@ -61,3 +84,20 @@ func _run() -> void:
 	await _shot("10_results")
 	Profile.touch_controls = 0
 	get_tree().quit(0)
+
+
+func _mouse_btn(pos: Vector2, pressed: bool) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = pressed
+	e.position = pos
+	e.global_position = pos
+	Input.parse_input_event(e)
+
+
+func _mouse_move(pos: Vector2) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = pos
+	e.global_position = pos
+	e.button_mask = MOUSE_BUTTON_MASK_LEFT
+	Input.parse_input_event(e)

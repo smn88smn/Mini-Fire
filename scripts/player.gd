@@ -28,6 +28,8 @@ var game: Node = null
 
 # state
 var hp: int = Catalog.MAX_HEALTH
+var max_hp: int = Catalog.MAX_HEALTH
+var fuel_mult := 1.0
 var alive := true
 var fuel := 1.0
 var jet_on := false
@@ -74,7 +76,10 @@ func setup(id: int, p_info: Dictionary, p_game: Node) -> void:
 	team = int(info.get("team", 0))
 	body_color = Catalog.color_by_index(int(info.get("color", 0)))
 	weapons = [str(info.get("weapon", "rifle")), Catalog.SECONDARY_WEAPON]
-	ammo = [int(Catalog.weapon(weapons[0])["mag"]), int(Catalog.weapon(weapons[1])["mag"])]
+	max_hp = Catalog.max_health_for(info)
+	hp = max_hp
+	fuel_mult = Catalog.fuel_factor_for(info)
+	ammo = [mag_of(weapons[0]), mag_of(weapons[1])]
 	name = ("B%d" % absi(id)) if id < 0 else ("P%d" % id)
 	set_multiplayer_authority(1 if is_bot else id)
 	collision_layer = 2
@@ -89,6 +94,7 @@ func setup(id: int, p_info: Dictionary, p_game: Node) -> void:
 	_jet_player = AudioStreamPlayer.new()
 	_jet_player.stream = Sfx.sounds.get("jet")
 	add_child(_jet_player)
+	_build_visuals()
 
 
 func is_controlled_here() -> bool:
@@ -112,9 +118,26 @@ func skin_of(weapon_id: String) -> String:
 	return str(sk.get(weapon_id, "default")) if sk is Dictionary else "default"
 
 
+func mag_of(weapon_id: String) -> int:
+	return Catalog.mag_for(info, weapon_id)
+
+
+func reload_of(weapon_id: String) -> float:
+	return Catalog.reload_for(info, weapon_id)
+
+
 func muzzle_global() -> Vector2:
 	var m := GunArt.muzzle_offset(current_weapon())
-	return global_position + SHOULDER + m.rotated(aim_angle)
+	var from := global_position + SHOULDER
+	var to := from + m.rotated(aim_angle)
+	if not is_inside_tree():
+		return to
+	# never spawn bullets inside a wall when the barrel pokes through it
+	var q := PhysicsRayQueryParameters2D.create(from, to, 1)
+	var hit := get_world_2d().direct_space_state.intersect_ray(q)
+	if not hit.is_empty():
+		return from + (hit["position"] - from) * 0.85
+	return to
 
 
 func is_enemy_of(other: Player) -> bool:
@@ -159,7 +182,7 @@ func _simulate(delta: float) -> void:
 		reloading -= delta
 		if reloading <= 0.0:
 			reloading = 0.0
-			ammo[slot] = int(weapon_data()["mag"])
+			ammo[slot] = mag_of(current_weapon())
 	# aim
 	if in_aim.length_squared() > 0.0001:
 		aim_angle = in_aim.angle()
@@ -170,7 +193,7 @@ func _simulate(delta: float) -> void:
 	# jetpack + gravity
 	jet_on = in_jet and fuel > 0.02
 	if jet_on:
-		fuel = maxf(0.0, fuel - FUEL_DRAIN * delta)
+		fuel = maxf(0.0, fuel - FUEL_DRAIN / fuel_mult * delta)
 		velocity.y = maxf(JET_MAX_UP, velocity.y - JET_ACCEL * delta)
 	else:
 		fuel = minf(1.0, fuel + (FUEL_REGEN_GROUND if is_on_floor() else FUEL_REGEN_AIR) * delta)
@@ -204,9 +227,9 @@ func start_reload() -> void:
 	if reloading > 0.0 or not alive:
 		return
 	var w := weapon_data()
-	if ammo[slot] >= int(w["mag"]):
+	if ammo[slot] >= mag_of(current_weapon()):
 		return
-	reloading = float(w["reload"])
+	reloading = reload_of(current_weapon())
 	if is_local_human():
 		Sfx.play("reload", 0.7)
 
@@ -226,14 +249,14 @@ func do_respawn(pos: Vector2) -> void:
 	global_position = pos
 	_net_pos = pos
 	velocity = Vector2.ZERO
-	hp = Catalog.MAX_HEALTH
+	hp = max_hp
 	alive = true
 	fuel = 1.0
 	slot = 0
 	reloading = 0.0
 	cooldown = 0.3
 	protect = 1.5
-	ammo = [int(Catalog.weapon(weapons[0])["mag"]), int(Catalog.weapon(weapons[1])["mag"])]
+	ammo = [mag_of(weapons[0]), mag_of(weapons[1])]
 	visible = true
 	collision_layer = 2
 	_ai_target = null
@@ -354,7 +377,7 @@ func _bot_think(delta: float) -> void:
 			switch_weapon()
 	else:
 		in_aim = Vector2(signf(in_move) if in_move != 0.0 else 1.0, 0.0)
-		if ammo[slot] < int(weapon_data()["mag"]) and reloading <= 0.0:
+		if ammo[slot] < mag_of(current_weapon()) and reloading <= 0.0:
 			start_reload()
 
 
@@ -378,57 +401,205 @@ func _has_los(target: Vector2) -> bool:
 	return get_world_2d().direct_space_state.intersect_ray(q).is_empty()
 
 
-# ================================================================ drawing
+# ================================================================ visuals
+const HEAD_TEX := preload("res://assets/char/head.png")
+const BODY_TEX := preload("res://assets/char/body.png")
+const LEG_TEX := preload("res://assets/char/leg.png")
+const NOZZLE := Vector2(-9, 11)
+
+var _vis: Node2D            # flips with facing
+var _torso: Node2D          # bobs while walking
+var _head: Sprite2D
+var _body: Sprite2D
+var _legs: Array = []
+var _pivot: Node2D          # shoulder, rotated to aim
+var _gun: Sprite2D
+var _arms: _Arms
+var _flash_node: _MuzzleFlash
+var _jet_fx: CPUParticles2D
+var _overlay: _Overlay
+var _tint_mat: ShaderMaterial
+var _shown_weapon := ""
+var _shown_skin := ""
+var _walk_t := 0.0
+
+
+func _build_visuals() -> void:
+	_tint_mat = FXKit.tint_material(body_color)
+	_vis = Node2D.new()
+	add_child(_vis)
+	_jet_fx = FXKit.jet_particles()
+	_jet_fx.position = NOZZLE
+	_vis.add_child(_jet_fx)
+	for lx in [-4.0, 4.0]:
+		var leg := Sprite2D.new()
+		leg.texture = LEG_TEX
+		leg.centered = false
+		leg.offset = Vector2(-32, 0)
+		leg.scale = Vector2(0.13, 0.095)
+		leg.position = Vector2(lx, 6)
+		leg.material = _tint_mat
+		_vis.add_child(leg)
+		_legs.append(leg)
+	_torso = Node2D.new()
+	_vis.add_child(_torso)
+	_body = Sprite2D.new()
+	_body.texture = BODY_TEX
+	_body.scale = Vector2(0.109, 0.109)
+	_body.material = _tint_mat
+	_torso.add_child(_body)
+	_head = Sprite2D.new()
+	_head.texture = HEAD_TEX
+	_head.scale = Vector2(0.135, 0.135)
+	_head.position = Vector2(2, -20)
+	_head.material = _tint_mat
+	_torso.add_child(_head)
+	# gun pivot lives outside the flipped node so aim rotation stays simple
+	_pivot = Node2D.new()
+	_pivot.position = SHOULDER
+	add_child(_pivot)
+	_arms = _Arms.new()
+	_arms.color = body_color
+	_arms.back = true
+	_pivot.add_child(_arms)
+	_gun = Sprite2D.new()
+	_pivot.add_child(_gun)
+	var front := _Arms.new()
+	front.color = body_color
+	front.back = false
+	_pivot.add_child(front)
+	_arms.set_meta("front", front)
+	_flash_node = _MuzzleFlash.new()
+	_flash_node.material = FXKit.additive()
+	_pivot.add_child(_flash_node)
+	_overlay = _Overlay.new()
+	_overlay.player = self
+	_overlay.z_index = 5
+	add_child(_overlay)
+	_refresh_gun()
+
+
+func _refresh_gun() -> void:
+	var w := current_weapon()
+	var sk := skin_of(w)
+	if w == _shown_weapon and sk == _shown_skin:
+		return
+	_shown_weapon = w
+	_shown_skin = sk
+	GunArt.setup_sprite(_gun, w, sk)
+	var h := GunArt.hands(w)
+	var front: _Arms = _arms.get_meta("front")
+	front.target = h[0]
+	_arms.target = h[1] if h[1] != null else h[0] + Vector2(-3, 3)
+	_flash_node.position = GunArt.muzzle_offset(w)
+	_arms.queue_redraw()
+	front.queue_redraw()
+
+
+func _process(delta: float) -> void:
+	if _vis == null:
+		return
+	_refresh_gun()
+	var facing := 1.0 if cos(aim_angle) >= 0.0 else -1.0
+	_vis.scale.x = facing
+	_pivot.rotation = aim_angle
+	_pivot.scale = Vector2(1, facing)
+	var on_floor := is_on_floor() if is_controlled_here() else absf(velocity.y) < 30.0
+	var walking := absf(velocity.x) > 40.0 and on_floor
+	if walking:
+		_walk_t += delta * 13.0 * signf(velocity.x) * facing
+	else:
+		_walk_t = lerpf(_walk_t, roundf(_walk_t / PI) * PI, clampf(delta * 10.0, 0.0, 1.0))
+	var swing := sin(_walk_t) * 0.55 if walking else 0.0
+	if not on_floor:
+		swing = 0.35 if jet_on else 0.18
+		_legs[0].rotation = lerpf(_legs[0].rotation, swing, delta * 8.0)
+		_legs[1].rotation = lerpf(_legs[1].rotation, -swing * 0.4, delta * 8.0)
+	else:
+		_legs[0].rotation = swing
+		_legs[1].rotation = -swing
+	_torso.position.y = -absf(sin(_walk_t)) * 1.6 if walking else 0.0
+	# head looks a little toward the aim
+	var look := clampf(sin(aim_angle) * facing, -1.0, 1.0)
+	_head.rotation = look * 0.25
+	_jet_fx.emitting = jet_on and alive
+	var t := Time.get_ticks_msec() / 1000.0
+	var a := 0.4 if protect > 0.0 and fmod(t * 8.0, 1.0) < 0.5 else 1.0
+	modulate.a = a
+	var f := clampf(flash / 0.12, 0.0, 1.0)
+	_tint_mat.set_shader_parameter("flash", f * 0.85)
+	if _gun.material is ShaderMaterial:
+		_gun.material.set_shader_parameter("flash", f * 0.6)
+	_flash_node.amount = clampf(muzzle_flash / 0.06, 0.0, 1.0)
+	_flash_node.visible = muzzle_flash > 0.0
+	_flash_node.queue_redraw()
+	_overlay.queue_redraw()
+
+
 func _draw() -> void:
 	if not alive:
 		return
-	var t := Time.get_ticks_msec() / 1000.0
-	var a := 0.45 if protect > 0.0 and fmod(t * 8.0, 1.0) < 0.5 else 1.0
-	var col := body_color
-	if flash > 0.0:
-		col = Color.WHITE
-	col.a = a
-	var facing := 1.0 if cos(aim_angle) >= 0.0 else -1.0
-	var half_h := BODY_HEIGHT * 0.5
-	# team ring in TDM
+	# soft contact shadow
+	var q := PhysicsRayQueryParameters2D.create(global_position, global_position + Vector2(0, 220), 1)
+	var hit := get_world_2d().direct_space_state.intersect_ray(q) if is_inside_tree() else {}
+	if not hit.is_empty():
+		var d: float = hit["position"].y - global_position.y
+		var k := clampf(1.0 - (d - 26.0) / 190.0, 0.0, 1.0)
+		if k > 0.0:
+			draw_set_transform(Vector2(0, d), 0.0, Vector2(1.0, 0.28))
+			draw_circle(Vector2.ZERO, 20.0 * (0.6 + 0.4 * k), Color(0, 0, 0, 0.35 * k))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if int(Network.settings.get("mode", 0)) == Catalog.MODE_TDM:
 		var tc: Color = Catalog.TEAM_COLORS[team]
-		tc.a = 0.55 * a
-		draw_arc(Vector2(0, half_h - 2), 18.0, PI * 0.1, PI * 0.9, 12, tc, 3.0)
-	# jetpack
-	var pack := Rect2(-facing * 14.0 - 6.0, -14.0, 12.0, 24.0)
-	draw_rect(pack, Color(0.25, 0.27, 0.32, a))
-	if jet_on:
-		var fl := 14.0 + randf() * 12.0
-		var base_x := pack.get_center().x
-		draw_colored_polygon(PackedVector2Array([Vector2(base_x - 5, 10), Vector2(base_x + 5, 10), Vector2(base_x, 10 + fl)]), Color(1.0, 0.6, 0.1, 0.9 * a))
-		draw_colored_polygon(PackedVector2Array([Vector2(base_x - 2.5, 10), Vector2(base_x + 2.5, 10), Vector2(base_x, 10 + fl * 0.6)]), Color(1.0, 0.95, 0.5, a))
-	# legs
-	var stride := sin(t * 14.0) * 5.0 if absf(velocity.x) > 40.0 and is_on_floor() else 0.0
-	draw_line(Vector2(-4, 10), Vector2(-5 + stride, half_h), col.darkened(0.35), 6.0)
-	draw_line(Vector2(4, 10), Vector2(5 - stride, half_h), col.darkened(0.35), 6.0)
-	# torso
-	draw_rect(Rect2(-10, -14, 20, 26), col)
-	draw_rect(Rect2(-10, -14, 20, 26), Color(0, 0, 0, 0.35 * a), false, 1.5)
-	# head + visor
-	draw_circle(Vector2(0, -24), 10.0, col.lightened(0.15))
-	draw_rect(Rect2(facing * 2.0 - (0.0 if facing > 0 else 9.0), -28, 9, 5), Color(0.1, 0.12, 0.18, a))
-	# gun
-	draw_set_transform(SHOULDER, aim_angle, Vector2(1, facing))
-	GunArt.draw_gun(self, current_weapon(), skin_of(current_weapon()), 1.0, t)
-	if muzzle_flash > 0.0:
-		var m := GunArt.muzzle_offset(current_weapon())
-		draw_circle(m, 7.0, Color(1, 0.85, 0.3, 0.9))
-		draw_circle(m + Vector2(6, 0), 4.0, Color(1, 1, 0.8, 0.9))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	# name + health bar (not for yourself; your HUD shows it)
-	var font := ThemeDB.fallback_font
-	var nm := str(info.get("name", "?"))
-	var name_col := Color(1, 1, 1, 0.9)
-	if int(Network.settings.get("mode", 0)) == Catalog.MODE_TDM:
-		name_col = Catalog.TEAM_COLORS[team].lightened(0.3)
-	draw_string(font, Vector2(-60, -50), nm, HORIZONTAL_ALIGNMENT_CENTER, 120, 13, name_col)
-	if not is_local_human():
-		var frac := clampf(float(hp) / Catalog.MAX_HEALTH, 0.0, 1.0)
-		draw_rect(Rect2(-18, -44, 36, 4), Color(0, 0, 0, 0.6))
-		draw_rect(Rect2(-18, -44, 36 * frac, 4), Color(0.3, 1.0, 0.4).lerp(Color(1, 0.25, 0.2), 1.0 - frac))
+		tc.a = 0.7
+		draw_set_transform(Vector2(0, 27), 0.0, Vector2(1.0, 0.32))
+		draw_arc(Vector2.ZERO, 22.0, 0.0, TAU, 28, tc, 5.0, true)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+class _Arms extends Node2D:
+	var color := Color.WHITE
+	var target := Vector2(10, 0)
+	var back := false
+
+	func _draw() -> void:
+		var sleeve := color.darkened(0.25 if not back else 0.45)
+		var start := Vector2(-3, 4) if not back else Vector2(1, 2)
+		draw_line(start, target, Color(0.08, 0.08, 0.1), 7.5, true)
+		draw_line(start, target, sleeve, 5.0, true)
+		draw_circle(target, 4.2, Color(0.08, 0.08, 0.1))
+		draw_circle(target, 3.2, Color(0.22, 0.2, 0.2) if back else Color(0.3, 0.27, 0.26))
+
+
+class _MuzzleFlash extends Node2D:
+	var amount := 1.0
+
+	func _draw() -> void:
+		var tex := FXKit.soft_circle()
+		var s := 0.6 + amount * 0.6
+		draw_texture_rect(tex, Rect2(Vector2(-14, -14) * s + Vector2(6, 0), Vector2(28, 28) * s), false, Color(1.0, 0.6, 0.15, 0.9))
+		draw_texture_rect(tex, Rect2(Vector2(-6, -6) * s + Vector2(3, 0), Vector2(12, 12) * s), false, Color(1, 1, 0.85, 1))
+		var pts := PackedVector2Array([Vector2(0, -5 * s), Vector2(26 * s, 0), Vector2(0, 5 * s)])
+		draw_colored_polygon(pts, Color(1.0, 0.85, 0.4, 0.85))
+
+
+class _Overlay extends Node2D:
+	var player: Player
+
+	func _draw() -> void:
+		if player == null or not player.alive:
+			return
+		var font := FXKit.game_font()
+		var nm := str(player.info.get("name", "?"))
+		var name_col := Color(1, 1, 1, 0.95)
+		if int(Network.settings.get("mode", 0)) == Catalog.MODE_TDM:
+			name_col = Catalog.TEAM_COLORS[player.team].lightened(0.35)
+		var y := -52.0
+		draw_string_outline(font, Vector2(-70, y), nm, HORIZONTAL_ALIGNMENT_CENTER, 140, 14, 4, Color(0, 0, 0, 0.75))
+		draw_string(font, Vector2(-70, y), nm, HORIZONTAL_ALIGNMENT_CENTER, 140, 14, name_col)
+		if not player.is_local_human():
+			var frac := clampf(float(player.hp) / float(maxi(1, player.max_hp)), 0.0, 1.0)
+			var r := Rect2(-20, -47, 40, 6)
+			draw_rect(r.grow(1.5), Color(0, 0, 0, 0.7))
+			draw_rect(Rect2(r.position, Vector2(r.size.x * frac, r.size.y)), Color(0.35, 1.0, 0.45).lerp(Color(1, 0.25, 0.2), 1.0 - frac))
+			draw_rect(Rect2(r.position, Vector2(r.size.x * frac, 2)), Color(1, 1, 1, 0.35))

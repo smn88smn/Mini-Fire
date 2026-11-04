@@ -20,27 +20,52 @@ var _center_until := 0.0
 
 class _Bars extends Control:
 	var hp := 1.0
+	var max_hp := 100
 	var fuel := 1.0
 	var weapon_name := ""
 	var ammo_text := ""
 	var reload_frac := 0.0
+	var _icons := {}
+
+	func _ready() -> void:
+		for n in ["medkit", "jet", "ammo"]:
+			_icons[n] = UIKit.icon_tex(n)
+
+	func _bar(r: Rect2, frac: float, col: Color) -> void:
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = Color(0, 0, 0, 0.55)
+		bg.set_corner_radius_all(int(r.size.y / 2))
+		bg.set_border_width_all(2)
+		bg.border_color = Color(1, 1, 1, 0.18)
+		draw_style_box(bg, r)
+		if frac > 0.0:
+			var fg := StyleBoxFlat.new()
+			fg.bg_color = col
+			fg.set_corner_radius_all(int(r.size.y / 2) - 1)
+			var fr := Rect2(r.position + Vector2(2, 2), Vector2(maxf(r.size.y - 4, (r.size.x - 4) * frac), r.size.y - 4))
+			draw_style_box(fg, fr)
+			draw_rect(Rect2(fr.position + Vector2(fr.size.y * 0.4, 1), Vector2(maxf(0, fr.size.x - fr.size.y * 0.8), fr.size.y * 0.32)), Color(1, 1, 1, 0.3))
+
+	func _txt(pos: Vector2, t: String, size: int, col: Color, w: float = -1, align := HORIZONTAL_ALIGNMENT_LEFT) -> void:
+		var font := UIKit.font()
+		draw_string_outline(font, pos, t, align, w, size, 5, Color(0, 0, 0, 0.8))
+		draw_string(font, pos, t, align, w, size, col)
 
 	func _draw() -> void:
-		var font := ThemeDB.fallback_font
+		draw_style_box(UIKit.glass_panel(), Rect2(0, 0, 300, 116))
 		# health
-		draw_rect(Rect2(0, 0, 260, 22), Color(0, 0, 0, 0.55))
-		draw_rect(Rect2(2, 2, 256 * hp, 18), Color(0.3, 1.0, 0.45).lerp(Color(1, 0.25, 0.25), 1.0 - hp))
-		draw_string(font, Vector2(8, 17), "HP %d" % int(round(hp * Catalog.MAX_HEALTH)), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color.BLACK)
+		draw_texture_rect(_icons["medkit"], Rect2(14, 12, 30, 26), false)
+		_bar(Rect2(52, 14, 232, 24), hp, Color(0.3, 1.0, 0.45).lerp(Color(1, 0.25, 0.25), 1.0 - hp))
+		_txt(Vector2(52, 33), "%d" % int(round(hp * max_hp)), 18, Color.WHITE, 232, HORIZONTAL_ALIGNMENT_CENTER)
 		# fuel
-		draw_rect(Rect2(0, 28, 260, 14), Color(0, 0, 0, 0.55))
-		draw_rect(Rect2(2, 30, 256 * fuel, 10), Color(1.0, 0.7, 0.2))
-		draw_string(font, Vector2(8, 40), "JET", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color.BLACK)
+		draw_texture_rect(_icons["jet"], Rect2(16, 44, 26, 27), false)
+		_bar(Rect2(52, 50, 232, 16), fuel, Color(1.0, 0.68, 0.18))
 		# weapon + ammo
-		draw_string(font, Vector2(0, 72), weapon_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
-		draw_string(font, Vector2(150, 72), ammo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, UIKit.ACCENT2)
+		draw_texture_rect(_icons["ammo"], Rect2(15, 78, 28, 27), false)
+		_txt(Vector2(52, 100), weapon_name, 20, Color.WHITE)
+		_txt(Vector2(150, 100), ammo_text, 20, UIKit.ACCENT2, 134, HORIZONTAL_ALIGNMENT_RIGHT)
 		if reload_frac > 0.0:
-			draw_rect(Rect2(0, 80, 260, 6), Color(0, 0, 0, 0.55))
-			draw_rect(Rect2(0, 80, 260 * reload_frac, 6), Color(0.6, 0.8, 1.0))
+			_bar(Rect2(52, 104, 232, 8), reload_frac, Color(0.55, 0.8, 1.0))
 
 
 func setup(p_game: Node) -> void:
@@ -68,22 +93,31 @@ func setup(p_game: Node) -> void:
 	top.add_child(UIKit.button("II", toggle_pause, 64))
 	top.add_child(UIKit.button("SCORE", func(): scoreboard.visible = not scoreboard.visible, 110, 18))
 	top.add_child(UIKit.hfill())
+	var pill := PanelContainer.new()
+	var psb := UIKit._box(Color(0.03, 0.04, 0.1, 0.6), 18, 2, Color(1, 1, 1, 0.18))
+	psb.content_margin_left = 22
+	psb.content_margin_right = 22
+	psb.content_margin_top = 2
+	psb.content_margin_bottom = 4
+	pill.add_theme_stylebox_override("panel", psb)
+	pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var mid := VBoxContainer.new()
-	mid.add_theme_constant_override("separation", 0)
+	mid.add_theme_constant_override("separation", -4)
+	pill.add_child(mid)
 	timer_label = UIKit.label("0:00", 30, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER)
 	_outline(timer_label)
 	score_label = UIKit.label("", 18, UIKit.ACCENT2, HORIZONTAL_ALIGNMENT_CENTER)
 	_outline(score_label)
 	mid.add_child(timer_label)
 	mid.add_child(score_label)
-	top.add_child(mid)
+	top.add_child(pill)
 	top.add_child(UIKit.hfill())
 	top.add_child(UIKit.spacer(0, 174))
 
 	# kill feed
 	feed = VBoxContainer.new()
 	feed.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	feed.offset_left = -360
+	feed.offset_left = -420
 	feed.offset_right = -16
 	feed.offset_top = 80
 	feed.add_theme_constant_override("separation", 2)
@@ -92,8 +126,8 @@ func setup(p_game: Node) -> void:
 
 	# status bars (top-left under buttons so thumbs do not cover them on phones)
 	bars = _Bars.new()
-	bars.position = Vector2(18, 80)
-	bars.size = Vector2(270, 90)
+	bars.position = Vector2(14, 78)
+	bars.size = Vector2(300, 116)
 	bars.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(bars)
 
@@ -126,7 +160,7 @@ func setup(p_game: Node) -> void:
 	var pv: VBoxContainer = pause_panel.get_meta("box")
 	pv.add_child(UIKit.label("PAUSED", 34, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER))
 	pv.add_child(UIKit.label("The match keeps running for everyone", 16, UIKit.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	pv.add_child(UIKit.accent_button("RESUME", toggle_pause, 300))
+	pv.add_child(UIKit.glass_button("RESUME", "green", toggle_pause, Vector2(320, 66), 28))
 	var tbtn := UIKit.button("", func(): pass, 300, 18)
 	tbtn.text = "Touch controls: " + ("ON" if touch.visible else "OFF")
 	tbtn.pressed.connect(func():
@@ -134,7 +168,7 @@ func setup(p_game: Node) -> void:
 		touch.reset()
 		tbtn.text = "Touch controls: " + ("ON" if touch.visible else "OFF"))
 	pv.add_child(tbtn)
-	pv.add_child(UIKit.button("LEAVE MATCH", func(): Network.leave(true), 300))
+	pv.add_child(UIKit.glass_button("LEAVE MATCH", "red", func(): Network.leave(true), Vector2(320, 58), 22))
 
 	# results
 	results_panel = _overlay()
@@ -182,12 +216,13 @@ func update_hud(p: Player, time_left: float, score_text: String) -> void:
 	timer_label.add_theme_color_override("font_color", Color(1, 0.4, 0.35) if tl <= 30 else Color.WHITE)
 	score_label.text = score_text
 	if p:
-		bars.hp = clampf(float(p.hp) / Catalog.MAX_HEALTH, 0.0, 1.0) if p.alive else 0.0
+		bars.hp = clampf(float(p.hp) / float(p.max_hp), 0.0, 1.0) if p.alive else 0.0
+		bars.max_hp = p.max_hp
 		bars.fuel = p.fuel
 		var w := p.weapon_data()
 		bars.weapon_name = str(w["name"])
-		bars.ammo_text = "RELOADING" if p.reloading > 0.0 else "%d / %d" % [p.ammo[p.slot], int(w["mag"])]
-		bars.reload_frac = 1.0 - p.reloading / float(w["reload"]) if p.reloading > 0.0 else 0.0
+		bars.ammo_text = "RELOADING" if p.reloading > 0.0 else "%d / %d" % [p.ammo[p.slot], p.mag_of(p.current_weapon())]
+		bars.reload_frac = 1.0 - p.reloading / p.reload_of(p.current_weapon()) if p.reloading > 0.0 else 0.0
 		bars.queue_redraw()
 	if _center_until > 0.0 and Time.get_ticks_msec() / 1000.0 > _center_until:
 		_center_until = 0.0
@@ -200,8 +235,15 @@ func show_center(text: String, seconds: float = 0.0) -> void:
 
 
 func add_kill(text: String, color: Color = Color.WHITE) -> void:
-	var l := UIKit.label(text, 16, color, HORIZONTAL_ALIGNMENT_RIGHT)
-	_outline(l)
+	var l := PanelContainer.new()
+	var sb := UIKit._box(Color(0.02, 0.03, 0.08, 0.6), 12, 0, Color.TRANSPARENT)
+	sb.content_margin_top = 3
+	sb.content_margin_bottom = 3
+	l.add_theme_stylebox_override("panel", sb)
+	l.size_flags_horizontal = Control.SIZE_SHRINK_END
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var tl := UIKit.label(text, 17, color, HORIZONTAL_ALIGNMENT_RIGHT)
+	l.add_child(tl)
 	feed.add_child(l)
 	while feed.get_child_count() > 5:
 		feed.get_child(0).free()

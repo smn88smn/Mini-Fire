@@ -10,11 +10,16 @@
 - چندنفره LAN (وای‌فای): یک نفر Host می‌شود، بقیه بازی را خودکار در شبکه پیدا می‌کنند یا با وارد کردن IP وصل می‌شوند (تا ۱۲ نفر همراه ربات‌ها، پورت 7777).
 - لابی: انتخاب نام و ۱۰ رنگ، انتخاب تیم، اضافه کردن ربات، تنظیم حالت، نقشه، زمان و حد کیل.
 - حالت‌ها: Free For All (همه با هم) و Team Deathmatch (گروهی، قرمز و آبی).
-- ۶ اسلحه: Pistol، Uzi، AK-47، Shotgun، Sniper، Rocket. اسلحه‌ها روی نقشه پیدا می‌شوند و دو اسلحه همزمان حمل می‌شود.
+- ۶ اسلحه: Pistol، Uzi، AK-47، Shotgun، Sniper، Rocket. اسلحه اصلی در لابی یا منوی اصلی انتخاب می‌شود و Pistol همیشه به‌عنوان اسلحه دوم همراه است (دکمه Swap).
+- روی نقشه جعبه سلامتی (Medkit، ۵۰ جان) و جعبه مهمات پیدا می‌شود که هر ۱۵ ثانیه دوباره ظاهر می‌شوند.
 - ۲ نقشه: Outpost و Canyon.
 - تمرین آفلاین با ربات‌های هوش مصنوعی.
 - کنترل لمسی (دو جوی‌استیک، دکمه Reload و Swap) و پشتیبانی کیبورد/ماوس روی کامپیوتر.
-- فروشگاه اسکین اسلحه: ۴ اسکین با MFC و ۵ اسکین با Gem.
+- گرافیک جدید (نسخه ۲): تصاویر پس‌زمینه با پارالاکس، سکوهای بافت‌دار، اسلحه‌ها و شخصیت‌های طراحی‌شده، افکت نور، دود، انفجار و ردّ گلوله.
+- منوی اصلی به سبک Mini Militia: دکمه‌های شیشه‌ای رنگی وسط صفحه، دکمه‌های کوچک Shop، Powers و Settings سمت راست، کارت Loadout سمت چپ.
+- تنظیمات: تغییر نام، رنگ، صدا و کنترل لمسی.
+- فروشگاه با اسکرول لمسی: ۵ اسکین با MFC و ۷ اسکین با Gem، و بخش Powers برای خرید قدرت.
+- قدرت‌ها (هرکدام ۳ سطح): Armor (جان بیشتر)، Jet Fuel (سوخت جت‌پک بیشتر)، Big Mags (خشاب بزرگ‌تر)، Fast Hands (ریلود سریع‌تر).
 - ذخیره رمزنگاری‌شده پروفایل روی گوشی.
 - صداهای ساخته‌شده با کد (فایل صوتی لازم نیست).
 - تست خودکار: بازی تمرینی، اتصال Host و Client، خروج وسط بازی. همه بدون خطا رد شدند.
@@ -28,7 +33,9 @@
 | بازی با ربات | نصف جایزه | نصف جایزه |
 | دیدن تبلیغ جایزه‌دار | — | 5 |
 
-قیمت اسکین‌ها: Desert و Forest هرکدام 400 MFC، Tiger با 900 MFC، Carbon با 25، Ice با 40، Neon با 60، Blood Moon با 80 و Gold با 150 جم.
+قیمت اسکین‌ها: Desert و Forest هرکدام 400 MFC، Tiger با 900 و Arctic با 1400 MFC؛ Carbon با 25، Ice با 40، Neon با 60، Blood Moon با 80، Gold با 150، Galaxy با 220 و Dragon با 300 جم.
+
+قیمت قدرت‌ها (سطح ۱ / ۲ / ۳): Armor برابر 500 و 1200 MFC و 60 جم؛ Jet Fuel برابر 400 و 1000 MFC و 50 جم؛ Big Mags و Fast Hands هرکدام 450 و 1100 MFC و 50 جم.
 بسته‌های جم برای فروش: 80، 450 و 1000 جم (شناسه‌ها `gems_small`، `gems_medium`، `gems_large`).
 همه این اعداد در فایل `autoload/catalog.gd` هستند و راحت عوض می‌شوند.
 
@@ -56,3 +63,8 @@
 این را همراه فایل zip به Claude بدهید:
 
 > This is a complete Godot 4.4 project called "Mini Fire" (2D LAN multiplayer jetpack shooter). Read docs/HANDOFF_FOR_CLAUDE.md first and follow it exactly. Do not rewrite or restructure the gameplay code; it is tested. Your tasks: (1) set up Godot 4.4.1 with Android export templates, JDK 17 and Android SDK, (2) create a release keystore and export a signed APK using the existing export_presets.cfg, (3) change Profile.SAVE_KEY to a random secret, (4) optionally install the Poing Studios AdMob plugin and the official GodotGooglePlayBilling plugin as described in the handoff doc, enable Gradle build, and put my real AdMob IDs in. Run the smoke tests in tests/run_tests.sh before and after your changes, and report any errors to me.
+
+
+## منابع گرافیک و فونت
+- تصاویر بازی (پس‌زمینه‌ها، اسلحه‌ها، شخصیت، آیکون‌ها) با هوش مصنوعی ساخته شده‌اند و مخصوص همین پروژه هستند.
+- فونت‌ها: Lilita One و Vazirmatn، هر دو با مجوز آزاد SIL OFL (فایل مجوز داخل `assets/fonts`).

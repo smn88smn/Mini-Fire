@@ -16,6 +16,7 @@ var mfc: int = 0
 var gems: int = 0
 var owned_skins: Array = ["default"]
 var equipped_skins: Dictionary = {}  # weapon_id -> skin_id
+var powers: Dictionary = {}  # power_id -> level (0..Catalog.POWER_MAX)
 var total_kills: int = 0
 var total_deaths: int = 0
 var matches_played: int = 0
@@ -82,6 +83,35 @@ func skin_for(weapon_id: String) -> String:
 	return s if owns_skin(s) else "default"
 
 
+# ---------------------------------------------------------------- powers
+func power_level(power_id: String) -> int:
+	return clampi(int(powers.get(power_id, 0)), 0, Catalog.POWER_MAX)
+
+
+## Returns {"currency", "price"} for the next level, or {} when maxed.
+func next_power_cost(power_id: String) -> Dictionary:
+	var lvl := power_level(power_id)
+	if lvl >= Catalog.POWER_MAX or not Catalog.POWERS.has(power_id):
+		return {}
+	var p: Dictionary = Catalog.POWERS[power_id]
+	return {"currency": p["currency"][lvl], "price": int(p["prices"][lvl])}
+
+
+func buy_power(power_id: String) -> bool:
+	var cost := next_power_cost(power_id)
+	if cost.is_empty() or not can_afford(cost["currency"], cost["price"]):
+		return false
+	if cost["currency"] == "mfc":
+		mfc -= int(cost["price"])
+	else:
+		gems -= int(cost["price"])
+	powers[power_id] = power_level(power_id) + 1
+	save_profile()
+	wallet_changed.emit()
+	profile_changed.emit()
+	return true
+
+
 # ---------------------------------------------------------------- rewards
 ## stats: {kills, deaths, won(bool), vs_bots_only(bool)}. Returns {mfc, gems}.
 func grant_match_rewards(kills: int, deaths: int, won: bool, bots_only: bool) -> Dictionary:
@@ -113,6 +143,7 @@ func lobby_info() -> Dictionary:
 		"color": color_index,
 		"weapon": primary_weapon,
 		"skins": skins,
+		"powers": powers.duplicate(),
 		"team": 0,
 		"bot": false,
 	}
@@ -128,6 +159,7 @@ func save_profile() -> void:
 	cfg.set_value("w", "gems", gems)
 	cfg.set_value("s", "owned", owned_skins)
 	cfg.set_value("s", "equipped", equipped_skins)
+	cfg.set_value("s", "powers", powers)
 	cfg.set_value("st", "kills", total_kills)
 	cfg.set_value("st", "deaths", total_deaths)
 	cfg.set_value("st", "matches", matches_played)
@@ -160,6 +192,8 @@ func load_profile() -> void:
 		owned_skins.append("default")
 	var e = cfg.get_value("s", "equipped", {})
 	equipped_skins = e if e is Dictionary else {}
+	var pw = cfg.get_value("s", "powers", {})
+	powers = pw if pw is Dictionary else {}
 	total_kills = int(cfg.get_value("st", "kills", 0))
 	total_deaths = int(cfg.get_value("st", "deaths", 0))
 	matches_played = int(cfg.get_value("st", "matches", 0))
