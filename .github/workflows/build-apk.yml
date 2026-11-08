@@ -57,39 +57,46 @@ jobs:
           grep -q "DONE practice" test.log
           ! grep -E "SCRIPT ERROR" test.log
 
-      - name: Prepare signing key (or fall back to debug signing)
+      - name: Install Android build template (needed for the Gradle build)
+        run: godot --headless --path . --install-android-build-template
+
+      - name: Prepare signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > /tmp/release.keystore
             echo "RELEASE_KEYSTORE=/tmp/release.keystore" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_USER=$KEYSTORE_ALIAS" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_PASS=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
           else
-            echo "No KEYSTORE_BASE64 secret - Godot will sign with its debug key (installable for testing)."
+            echo "No KEYSTORE_BASE64 secret - generating a debug keystore (installable for testing)."
+            keytool -genkeypair -keystore /tmp/debug.keystore -storepass android -keypass android \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Mini Fire Debug, OU=Dev, O=MiniFire, L=Tehran, C=IR"
+            echo "RELEASE_KEYSTORE=/tmp/debug.keystore" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_USER=androiddebugkey" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_PASS=android" >> "$GITHUB_ENV"
           fi
 
-      - name: Enable Firebase (only when google-services.json is present)
+      - name: Firebase check
         run: |
           if [ -f android/build/google-services.json ]; then
-            echo "google-services.json found - building with Gradle so Firebase (Google Sign-In + cloud save) is included."
-            sed -i 's|^gradle_build/use_gradle_build=false|gradle_build/use_gradle_build=true|' export_presets.cfg
-            grep gradle_build/use_gradle_build export_presets.cfg
+            echo "google-services.json found - Google Sign-In and cloud saves will be included in this build."
           else
-            echo "No google-services.json - building without Firebase. Add it at android/build/google-services.json to enable Google Sign-In and cloud saves."
+            echo "No google-services.json - building WITHOUT Firebase. Add it at android/build/google-services.json (Firebase console > Android app) to enable Google Sign-In and cloud saves."
           fi
 
       - name: Export release APK
         env:
           RELEASE_KEYSTORE: ${{ env.RELEASE_KEYSTORE }}
-          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           mkdir -p export
-          if [ -n "$RELEASE_KEYSTORE" ]; then
-            export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$RELEASE_KEYSTORE"
-            export GODOT_ANDROID_KEYSTORE_RELEASE_USER="$KEYSTORE_ALIAS"
-            export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$KEYSTORE_PASSWORD"
-          fi
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$RELEASE_KEYSTORE"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="$RELEASE_KEYSTORE_USER"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$RELEASE_KEYSTORE_PASS"
           godot --headless --path . --export-release "Android" export/MiniFire.apk 2>&1 | tee export.log
           test -f export/MiniFire.apk
           ls -la export

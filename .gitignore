@@ -5,3 +5,6 @@ export/
 *.keystore
 override.cfg
 secrets/
+android/build/.gradle/
+android/build/build/
+android/build/.godot/
