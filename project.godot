@@ -7,7 +7,7 @@ config_version=5
 
 config/name="Mini Fire"
 config/description="2D LAN multiplayer jetpack shooter"
-config/version="3.0.0"
+config/version="4.0.0"
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.4", "GL Compatibility")
 config/icon="res://icon.png"
@@ -19,6 +19,7 @@ Catalog="*res://autoload/catalog.gd"
 Sfx="*res://autoload/sfx.gd"
 Monetization="*res://autoload/monetization.gd"
 Network="*res://autoload/network.gd"
+Cloud="*res://autoload/cloud.gd"
 
 [display]
 
@@ -44,3 +45,7 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0.07, 0.08, 0.12, 1)
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/FirebasePlugin/plugin.cfg")

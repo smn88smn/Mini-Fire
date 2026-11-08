@@ -2,7 +2,7 @@ extends Node
 ## Static game data: weapons, gun skins, player colors, maps and reward rules.
 ## Everything that a designer may want to tune lives here.
 
-const GAME_VERSION := 3
+const GAME_VERSION := 4
 
 # ---------------------------------------------------------------- weapons
 # damage: per bullet/pellet. fire_delay: seconds between shots.
@@ -73,6 +73,24 @@ const GROUND_GUN_LIFETIME := 30.0  # dropped guns vanish after this
 const GUN_SPOT_RESPAWN := 20.0     # map gun spots refill after this
 const PICK_RADIUS := 60.0
 
+# ---------------------------------------------------------------- gun leveling
+# Every weapon has its own level 1..6, raised in the Spin Shop.
+# Higher level = more damage per bullet (see GUN_LEVEL_MULT).
+# Level 6 bullets are incendiary: they set the enemy on fire (burn damage).
+const GUN_LEVEL_MAX := 6
+## Damage multiplier per level (index 0 = level 1).
+const GUN_LEVEL_MULT := [1.0, 1.12, 1.25, 1.4, 1.6, 2.0]
+## Level 6 fire bullets: burn DPS and burn duration (host-authoritative).
+const BURN_DPS := 5.0
+const BURN_TIME := 2.0
+const BURN_TICK := 0.5  # host applies burn damage every N seconds
+
+func gun_level_mult(level: int) -> float:
+	return GUN_LEVEL_MULT[clampi(level, 1, GUN_LEVEL_MAX) - 1]
+
+func gun_level_damage(weapon_id: String, level: int) -> int:
+	return maxi(1, int(round(float(weapon(weapon_id)["damage"]) * gun_level_mult(level))))
+
 # ---------------------------------------------------------------- bots
 # aim: random aim error (radians). react: think interval range. lead: target lead factor.
 # burst: chance to keep the trigger down each think. dmg: damage multiplier for bot shots.
@@ -93,8 +111,17 @@ const CHAR_SKINS := {
 	"skull": {"name": "Reaper", "currency": "gem", "price": 70, "rarity": "epic", "head": "head_skull", "body": "body_skull"},
 	"cyborg": {"name": "Cyborg", "currency": "gem", "price": 120, "rarity": "legend", "head": "head_cyborg", "body": "body_cyborg"},
 	"legend": {"name": "Golden Knight", "currency": "gem", "price": 250, "rarity": "legend", "head": "head_legend", "body": "body_legend"},
+	"medic": {"name": "Medic", "currency": "mfc", "price": 2400, "rarity": "rare", "head": "head_medic", "body": "body_medic"},
+	"hazmat": {"name": "Hazmat", "currency": "mfc", "price": 1200, "rarity": "rare", "head": "head_hazmat", "body": "body_hazmat"},
+	"ghillie": {"name": "Ghillie", "currency": "mfc", "price": 2000, "rarity": "rare", "head": "head_ghillie", "body": "body_ghillie"},
+	"raider": {"name": "Raider", "currency": "gem", "price": 50, "rarity": "epic", "head": "head_raider", "body": "body_raider"},
+	"astro": {"name": "Spaceman", "currency": "gem", "price": 35, "rarity": "epic", "head": "head_astro", "body": "body_astro"},
+	"zombie": {"name": "Zombie", "currency": "gem", "price": 90, "rarity": "epic", "head": "head_zombie", "body": "body_zombie"},
+	"captain": {"name": "Captain", "currency": "gem", "price": 60, "rarity": "epic", "head": "head_captain", "body": "body_captain"},
+	"alien": {"name": "Alien", "currency": "gem", "price": 150, "rarity": "legend", "head": "head_alien", "body": "body_alien"},
+	"mecha": {"name": "Mecha", "currency": "gem", "price": 180, "rarity": "legend", "head": "head_mecha", "body": "body_mecha"},
 }
-const CHAR_ORDER := ["trooper", "commando", "pilot", "ninja", "skull", "cyborg", "legend"]
+const CHAR_ORDER := ["trooper", "commando", "pilot", "ninja", "skull", "cyborg", "legend", "medic", "hazmat", "ghillie", "raider", "astro", "zombie", "captain", "alien", "mecha"]
 
 # ---------------------------------------------------------------- skins
 # currency: "mfc" (soft coin) or "gem". price 0 = free/default.
@@ -150,12 +177,19 @@ const PICKUP_HEAL := 50
 const PICKUP_RESPAWN := 15.0
 
 # ---------------------------------------------------------------- players
+## 16 player colors. In Team Deathmatch the color IS the team: players with
+## the same color fight together (spawns: even colors left base, odd right base).
 const PLAYER_COLORS := [
-	Color("ff4d4d"), Color("4da6ff"), Color("4dff88"), Color("ffd24d"),
+	Color("ff4d4d"), Color("ffd24d"), Color("4da6ff"), Color("4dff88"),
 	Color("c44dff"), Color("ff8f4d"), Color("4dffff"), Color("ff4dc4"),
-	Color("f2f2f2"), Color("8c8c8c"),
+	Color("f2f2f2"), Color("8c8c8c"), Color("9fff4d"), Color("4d6bff"),
+	Color("ff6b9e"), Color("b9ff4d"), Color("4dffb3"), Color("d4d44d"),
 ]
-const TEAM_COLORS := [Color("ff4d4d"), Color("4da6ff")]
+const COLOR_NAMES := [
+	"Red", "Yellow", "Blue", "Green", "Purple", "Orange", "Cyan", "Pink",
+	"White", "Gray", "Lime", "Indigo", "Rose", "Mint", "Aqua", "Sand",
+]
+const TEAM_COLORS := [Color("ff4d4d"), Color("4da6ff")]  # legacy (FFA spawns)
 const TEAM_NAMES := ["Red", "Blue"]
 
 # ---------------------------------------------------------------- modes
@@ -164,9 +198,9 @@ const MODE_TDM := 1
 const MODE_NAMES := ["Free For All", "Team Deathmatch"]
 const KILL_LIMITS := {0: 20, 1: 30}
 const MATCH_TIMES := [180, 300, 480, 600]  # seconds
-const MAX_PLAYERS := 12
+const MAX_PLAYERS := 16
 const RESPAWN_TIME := 3.0
-const MAX_HEALTH := 100
+const MAX_HEALTH := 300
 
 # ---------------------------------------------------------------- rewards (v1: earned by playing)
 const REWARD_MFC_PER_KILL := 10
@@ -184,6 +218,25 @@ const GEM_PACKS := [
 	{"product_id": "gems_medium", "gems": 450, "label": "450 Gems"},
 	{"product_id": "gems_large", "gems": 1000, "label": "1000 Gems"},
 ]
+
+# ---------------------------------------------------------------- spin shop
+## The Spin Shop: pay once, get a random prize (weighted).
+## Gun level-ups apply to the weapon selected in the spin UI.
+## Prizes: [weight, kind, value]. kind: "mfc" | "gems" | "gunlvl" | "gunlvl2"
+const SPIN_COST_MFC := 400
+const SPIN_COST_GEM := 20
+const SPIN_PRIZES := [
+	[40, "mfc", 200],     # +200 MFC
+	[25, "gunlvl", 1],    # +1 level for the selected gun
+	[15, "mfc", 600],     # +600 MFC
+	[10, "gems", 10],     # +10 gems
+	[6, "gems", 25],      # +25 gems
+	[4, "gunlvl2", 1],    # +2 levels for the selected gun
+]
+
+# ---------------------------------------------------------------- telegram shop
+## Your Telegram channel shop where players buy gems. Opens in the browser.
+const TELEGRAM_SHOP_URL := "https://t.me/MiniFireShop"
 
 # ---------------------------------------------------------------- maps
 # Each map: size, list of solid rects [x, y, w, h, style?], spawn points per team.
@@ -354,6 +407,9 @@ func skin(id: String) -> Dictionary:
 
 func color_by_index(i: int) -> Color:
 	return PLAYER_COLORS[clampi(i, 0, PLAYER_COLORS.size() - 1)]
+
+func color_name(i: int) -> String:
+	return COLOR_NAMES[clampi(i, 0, COLOR_NAMES.size() - 1)]
 
 
 ## Power effects for a lobby info dictionary ({"powers": {"armor": 2, ...}}).

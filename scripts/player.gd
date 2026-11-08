@@ -29,6 +29,7 @@ var game: Node = null
 # state
 var hp: int = Catalog.MAX_HEALTH
 var max_hp: int = Catalog.MAX_HEALTH
+var burn_t := 0.0   # seconds of burning left (visual only; damage is host-side)
 var fuel_mult := 1.0
 var alive := true
 var fuel := 1.0
@@ -572,6 +573,11 @@ func _refresh_gun() -> void:
 	front.queue_redraw()
 
 
+## Level-6 fire bullets: show flames on this player for `dur` seconds.
+func apply_burn_fx(dur: float) -> void:
+	burn_t = maxf(burn_t, dur)
+
+
 func _process(delta: float) -> void:
 	if _vis == null:
 		return
@@ -608,10 +614,19 @@ func _process(delta: float) -> void:
 		_gun.material.set_shader_parameter("flash", f * 0.6)
 	if is_dual():
 		_flash_node.position = GunArt.muzzle_offset(current_weapon()) + (DUAL_OFFSET if _dual_side == 0 else Vector2.ZERO)
-	_flash_node.amount = clampf(muzzle_flash / 0.06, 0.0, 1.0)
-	_flash_node.visible = muzzle_flash > 0.0
-	_flash_node.queue_redraw()
+		_flash_node.amount = clampf(muzzle_flash / 0.06, 0.0, 1.0)
+		_flash_node.visible = muzzle_flash > 0.0
+		_flash_node.queue_redraw()
 	_overlay.queue_redraw()
+	# burning: flame sparks + warm tint (damage is applied host-side)
+	if burn_t > 0.0:
+		burn_t = maxf(0.0, burn_t - delta)
+		if game and randf() < delta * 22.0:
+			game.fx.spark(global_position + Vector2(randf_range(-8, 8), randf_range(-22, 8)),
+				Color(randf_range(0.9, 1.0), randf_range(0.35, 0.6), 0.1), 2, 150.0)
+		modulate = Color(1.0, 0.72, 0.55)
+	else:
+		modulate = Color.WHITE
 
 
 func _draw() -> void:
@@ -628,7 +643,7 @@ func _draw() -> void:
 			draw_circle(Vector2.ZERO, 20.0 * (0.6 + 0.4 * k), Color(0, 0, 0, 0.35 * k))
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if int(Network.settings.get("mode", 0)) == Catalog.MODE_TDM:
-		var tc: Color = Catalog.TEAM_COLORS[team]
+		var tc: Color = Catalog.color_by_index(team)
 		tc.a = 0.7
 		draw_set_transform(Vector2(0, 27), 0.0, Vector2(1.0, 0.32))
 		draw_arc(Vector2.ZERO, 22.0, 0.0, TAU, 28, tc, 5.0, true)
@@ -671,7 +686,7 @@ class _Overlay extends Node2D:
 		var nm := str(player.info.get("name", "?"))
 		var name_col := Color(1, 1, 1, 0.95)
 		if int(Network.settings.get("mode", 0)) == Catalog.MODE_TDM:
-			name_col = Catalog.TEAM_COLORS[player.team].lightened(0.35)
+			name_col = Catalog.color_by_index(player.team).lightened(0.35)
 		var y := -52.0
 		draw_string_outline(font, Vector2(-70, y), nm, HORIZONTAL_ALIGNMENT_CENTER, 140, 14, 4, Color(0, 0, 0, 0.75))
 		draw_string(font, Vector2(-70, y), nm, HORIZONTAL_ALIGNMENT_CENTER, 140, 14, name_col)

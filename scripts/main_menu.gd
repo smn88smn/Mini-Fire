@@ -6,6 +6,9 @@ var _join_list: VBoxContainer
 var _ip_edit: LineEdit
 var _join_status: Label
 var _view_char := ""
+var _room_code_label: Label = null
+var _room_status: Label = null
+var _code_edit: LineEdit = null
 
 
 func _ready() -> void:
@@ -20,6 +23,15 @@ func _ready() -> void:
 		Network.last_message = ""
 	Network.connection_failed.connect(_on_connection_failed)
 	Network.hosts_updated.connect(_on_hosts_updated)
+	Network.online_room_ready.connect(_on_room_ready)
+	Network.online_room_failed.connect(_on_room_failed)
+	Cloud.signed_in.connect(func(_email: String):
+		UIKit.toast(self, "Signed in! Your progress is saved to the cloud.", UIKit.GOOD)
+		_show_home())
+	Cloud.sign_in_failed.connect(func(reason: String):
+		UIKit.toast(self, "Google Sign-In failed: " + reason, UIKit.BAD))
+	Cloud.cloud_loaded.connect(func():
+		UIKit.toast(self, "Cloud save restored.", UIKit.GOOD))
 
 
 func _exit_tree() -> void:
@@ -69,6 +81,16 @@ func _show_home() -> void:
 	who.add_theme_constant_override("icon_max_width", 34)
 	who.custom_minimum_size = Vector2(220, 54)
 	top.add_child(who)
+	top.add_child(UIKit.spacer(8))
+	if Cloud.available():
+		var acct: Button
+		if Cloud.is_signed_in():
+			acct = UIKit.glass_button("  " + Cloud.account_email(), "green", _cloud_account, Vector2(0, 54), 17)
+		else:
+			acct = UIKit.glass_button("SIGN IN WITH GOOGLE", "blue", Cloud.sign_in_google, Vector2(0, 54), 17)
+		acct.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		acct.add_theme_constant_override("icon_max_width", 34)
+		top.add_child(acct)
 	top.add_child(UIKit.hfill())
 	top.add_child(UIKit.wallet_chips())
 
@@ -88,9 +110,10 @@ func _show_home() -> void:
 	logo.custom_minimum_size = Vector2(440, 160)
 	logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	center.add_child(logo)
-	center.add_child(UIKit.glass_button("PRACTICE VS BOTS", "green", Network.host_practice, Vector2(420, 78), 30))
-	center.add_child(UIKit.glass_button("HOST WI-FI GAME", "orange", _on_host, Vector2(420, 78), 30))
-	center.add_child(UIKit.glass_button("JOIN WI-FI GAME", "blue", _show_join, Vector2(420, 78), 30))
+	center.add_child(UIKit.glass_button("PRACTICE VS BOTS", "green", Network.host_practice, Vector2(420, 72), 27))
+	center.add_child(UIKit.glass_button("ONLINE ROOM", "purple", _show_online, Vector2(420, 72), 27))
+	center.add_child(UIKit.glass_button("HOST WI-FI GAME", "orange", _on_host, Vector2(420, 72), 27))
+	center.add_child(UIKit.glass_button("JOIN WI-FI GAME", "blue", _show_join, Vector2(420, 72), 27))
 	for c in center.get_children():
 		c.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	center.add_child(UIKit.spacer(30))
@@ -176,6 +199,102 @@ func _open_shop(tab: String = "skins") -> void:
 	s.closed.connect(_show_home)
 	add_child(s)
 
+
+# ================================================================ cloud account
+func _cloud_account() -> void:
+	var dlg := PanelContainer.new()
+	dlg.add_theme_stylebox_override("panel", UIKit.glass_panel())
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	dlg.add_child(v)
+	v.add_child(UIKit.label("Signed in as", 16, UIKit.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	v.add_child(UIKit.label(Cloud.account_email(), 22, UIKit.ACCENT2, HORIZONTAL_ALIGNMENT_CENTER))
+	v.add_child(UIKit.label("Your wallet, characters, skins and gun levels are backed up. If you reinstall the game, sign in with the same Google account to restore everything.", 15, UIKit.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	v.add_child(UIKit.spacer(6))
+	v.add_child(UIKit.glass_button("SAVE NOW", "green", func():
+		Cloud.save_now()
+		UIKit.toast(self, "Saved to cloud.", UIKit.GOOD)
+		dlg.queue_free(), Vector2(0, 54), 20))
+	v.add_child(UIKit.glass_button("SIGN OUT", "red", func():
+		Cloud.sign_out()
+		dlg.queue_free()
+		_show_home(), Vector2(0, 54), 20))
+	v.add_child(UIKit.glass_button("CLOSE", "dark", func(): dlg.queue_free(), Vector2(0, 54), 20))
+	add_child(dlg)
+	dlg.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+
+# ================================================================ online room
+func _show_online() -> void:
+	var page := _page("ONLINE ROOM")
+	var row := HBoxContainer.new()
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 16)
+	page.add_child(row)
+	# create
+	var cp := UIKit.panel()
+	cp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(cp)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 10)
+	cp.add_child(cv)
+	cv.add_child(UIKit.label("CREATE A ROOM", 24, UIKit.ACCENT2))
+	cv.add_child(UIKit.label("Up to %d players. You are the host. Share the room code with your friends - they can join from anywhere with internet." % Catalog.MAX_PLAYERS, 16, UIKit.MUTED))
+	cv.add_child(UIKit.glass_button("CREATE ROOM", "green", func():
+		if _room_status:
+			_room_status.text = "Opening port and finding your IP..."
+			_room_status.add_theme_color_override("font_color", UIKit.MUTED)
+		Network.host_online(), Vector2(0, 64), 24))
+	_room_code_label = UIKit.label("", 34, UIKit.GOOD, HORIZONTAL_ALIGNMENT_CENTER)
+	_room_code_label.add_theme_constant_override("outline_size", 6)
+	cv.add_child(_room_code_label)
+	_room_status = UIKit.label("", 15, UIKit.MUTED)
+	_room_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cv.add_child(_room_status)
+	# join
+	var jp := UIKit.panel()
+	jp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(jp)
+	var jv := VBoxContainer.new()
+	jv.add_theme_constant_override("separation", 10)
+	jp.add_child(jv)
+	jv.add_child(UIKit.label("JOIN A ROOM", 24, UIKit.ACCENT2))
+	jv.add_child(UIKit.label("Enter the room code the host shared (like AB2C7-H3K9Q).", 16, UIKit.MUTED))
+	_code_edit = LineEdit.new()
+	_code_edit.placeholder_text = "AB2C7-H3K9Q"
+	_code_edit.text = ""
+	_code_edit.custom_minimum_size = Vector2(0, 58)
+	_code_edit.add_theme_font_size_override("font_size", 26)
+	_code_edit.text_submitted.connect(func(_t): _join_code())
+	jv.add_child(_code_edit)
+	jv.add_child(UIKit.glass_button("JOIN ROOM", "blue", _join_code, Vector2(0, 64), 24))
+	var note := UIKit.label("Both players need internet. If the host's router blocks the connection, use HOST/JOIN WI-FI GAME on the same network instead.", 14, UIKit.MUTED)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	page.add_child(note)
+
+func _on_room_ready(code: String) -> void:
+	if _room_code_label and is_instance_valid(_room_code_label):
+		_room_code_label.text = code
+	if _room_status and is_instance_valid(_room_status):
+		_room_status.text = "Room created! Share this code with your friends. They join from ONLINE ROOM -> JOIN A ROOM."
+		_room_status.add_theme_color_override("font_color", UIKit.GOOD)
+
+func _on_room_failed(reason: String) -> void:
+	if _room_status and is_instance_valid(_room_status):
+		_room_status.text = reason
+		_room_status.add_theme_color_override("font_color", UIKit.BAD)
+
+func _join_code() -> void:
+	if _code_edit == null:
+		return
+	var err := Network.join_by_code(_code_edit.text)
+	if err == ERR_INVALID_PARAMETER:
+		if _room_status:
+			_room_status.text = "That is not a valid room code."
+			_room_status.add_theme_color_override("font_color", UIKit.BAD)
+	elif err != OK:
+		if _room_status:
+			_room_status.text = "Could not start connection (%s)." % error_string(err)
+			_room_status.add_theme_color_override("font_color", UIKit.BAD)
 
 # ================================================================ join
 func _show_join() -> void:

@@ -13,7 +13,7 @@ func _ready() -> void:
 	_content = VBoxContainer.new()
 	root.add_child(_content)
 	var head := HBoxContainer.new()
-	var title := "PRACTICE LOBBY" if Network.offline else ("YOUR LOBBY" if Network.is_host() else "LOBBY")
+	var title := "PRACTICE LOBBY" if Network.offline else (("YOUR ONLINE ROOM" if Network.online else "YOUR LOBBY") if Network.is_host() else ("ONLINE ROOM" if Network.online else "LOBBY"))
 	head.add_child(UIKit.glass_button("LEAVE", "red", func(): Network.leave(true), Vector2(140, 58)))
 	head.add_child(UIKit.spacer(0, 6))
 	var tl := UIKit.label(title, 40, UIKit.ACCENT2)
@@ -23,9 +23,15 @@ func _ready() -> void:
 	head.add_child(UIKit.wallet_chips())
 	_content.add_child(head)
 	if Network.is_host() and not Network.offline:
-		var ips := Network.local_ips()
-		var t := "Friends on the same Wi-Fi: open JOIN WI-FI GAME, or type IP  %s" % (" / ".join(ips) if ips.size() > 0 else "(no Wi-Fi detected - turn on Wi-Fi or hotspot)")
-		_content.add_child(UIKit.label(t, 18, UIKit.ACCENT2))
+		if Network.online and Network.room_code != "":
+			var code_lbl := UIKit.label("ROOM CODE:  " + Network.room_code, 30, UIKit.GOOD, HORIZONTAL_ALIGNMENT_CENTER)
+			code_lbl.add_theme_constant_override("outline_size", 6)
+			_content.add_child(code_lbl)
+			_content.add_child(UIKit.label("Share this code - friends join from ONLINE ROOM -> JOIN A ROOM (anywhere with internet).", 15, UIKit.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+		else:
+			var ips := Network.local_ips()
+			var t := "Friends on the same Wi-Fi: open JOIN WI-FI GAME, or type IP  %s" % (" / ".join(ips) if ips.size() > 0 else "(no Wi-Fi detected - turn on Wi-Fi or hotspot)")
+			_content.add_child(UIKit.label(t, 18, UIKit.ACCENT2))
 	var row := HBoxContainer.new()
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	row.add_theme_constant_override("separation", 20)
@@ -96,7 +102,7 @@ func _refresh() -> void:
 		var rowp := PanelContainer.new()
 		var rsb := UIKit._box(Color(0.03, 0.04, 0.1, 0.55), 14, 2, Color(1, 1, 1, 0.12))
 		if tdm:
-			rsb.border_color = Catalog.TEAM_COLORS[int(info.get("team", 0))]
+			rsb.border_color = Catalog.color_by_index(int(info.get("team", 0)))
 			rsb.border_width_left = 6
 		elif int(id) == me:
 			rsb.border_color = UIKit.ACCENT2
@@ -128,12 +134,12 @@ func _refresh() -> void:
 			r.add_child(bl)
 		if tdm:
 			var team := int(info.get("team", 0))
-			var tl := UIKit.label(Catalog.TEAM_NAMES[team].to_upper(), 16, Catalog.TEAM_COLORS[team])
+			var tl := UIKit.label(Catalog.color_name(team).to_upper(), 16, Catalog.color_by_index(team))
 			tl.custom_minimum_size.x = 60
 			r.add_child(tl)
 			if host and info.get("bot", false):
 				var bid := int(id)
-				r.add_child(UIKit.glass_button("SWAP", "dark", func(): Network.set_bot_team(bid, 1 - team), Vector2(80, 44), 16))
+				r.add_child(UIKit.glass_button("SWAP", "dark", func(): Network.set_bot_team(bid, team + 1 if team % 2 == 0 else team - 1), Vector2(80, 44), 16))
 		_list.add_child(rowp)
 	if host:
 		var br := HBoxContainer.new()
@@ -166,14 +172,10 @@ func _refresh() -> void:
 	crow.add_child(UIKit.glass_button(">", "blue", step.bind(1), Vector2(50, 48), 20))
 	_side.add_child(crow)
 	if tdm:
-		_side.add_child(UIKit.label("TEAM", 16, UIKit.MUTED))
-		var trow := HBoxContainer.new()
-		for t in 2:
-			var tid := t
-			var on := int(my.get("team", 0)) == t
-			var b := UIKit.glass_button(Catalog.TEAM_NAMES[t].to_upper(), (["red", "blue"][t]) if on else "dark", func(): Network.update_my_info({"team": tid}), Vector2(140, 52), 20)
-			trow.add_child(b)
-		_side.add_child(trow)
+		var tnote := UIKit.label("YOUR COLOR IS YOUR TEAM", 16, UIKit.ACCENT2, HORIZONTAL_ALIGNMENT_CENTER)
+		tnote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_side.add_child(tnote)
+		_side.add_child(UIKit.label("Pick a color above. Same-color players are one team; the host can move bots with SWAP.", 13, UIKit.MUTED, HORIZONTAL_ALIGNMENT_CENTER))
 	_side.add_child(UIKit.glass_button("SHOP  (SKINS / POWERS)", "yellow", _open_shop, Vector2(0, 54), 19))
 	_side.add_child(UIKit.spacer(6))
 	_side.add_child(UIKit.label("MATCH", 16, UIKit.MUTED))

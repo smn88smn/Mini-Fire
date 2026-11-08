@@ -29,6 +29,13 @@ var owned_chars: Array = ["trooper"]
 var bot_level: int = 1
 ## Touch layout overrides: control id -> [x_frac, y_frac, scale]. Empty = defaults.
 var controls: Dictionary = {}
+## Per-weapon level 1..Catalog.GUN_LEVEL_MAX (raised in the Spin Shop).
+var gun_levels: Dictionary = {}  # weapon_id -> int
+## Redeemed gift codes (Telegram gem sales) so a code cannot be reused locally.
+var redeemed_codes: Array = []
+## Cloud account (set after Google Sign-In; see autoload/cloud.gd).
+var cloud_uid: String = ""
+var cloud_email: String = ""
 
 
 func _ready() -> void:
@@ -148,6 +155,64 @@ func buy_power(power_id: String) -> bool:
 	return true
 
 
+# ---------------------------------------------------------------- gun levels
+func gun_level(weapon_id: String) -> int:
+	return clampi(int(gun_levels.get(weapon_id, 1)), 1, Catalog.GUN_LEVEL_MAX)
+
+func set_gun_level(weapon_id: String, level: int) -> void:
+	gun_levels[weapon_id] = clampi(level, 1, Catalog.GUN_LEVEL_MAX)
+	save_profile()
+	profile_changed.emit()
+
+## Adds levels (from the Spin Shop). Returns the new level.
+func add_gun_levels(weapon_id: String, add: int) -> int:
+	var nl := clampi(gun_level(weapon_id) + add, 1, Catalog.GUN_LEVEL_MAX)
+	set_gun_level(weapon_id, nl)
+	return nl
+
+# ---------------------------------------------------------------- gift codes
+func redeem_code(code: String) -> int:
+	## Returns gems granted, or -1 if the code is invalid, -2 if already used.
+	var clean := code.strip_edges().to_upper()
+	if clean in redeemed_codes:
+		return -2
+	var gems := _code_gems(clean)
+	if gems <= 0:
+		return -1
+	redeemed_codes.append(clean)
+	add_currency(0, gems)
+	save_profile()
+	return gems
+
+## Validates a gift code: "MF-<payload>-<checksum>-<gems>" where <checksum> is
+## derived from the payload with HMAC-SHA256 + the app secret (see tools/gem_codes.py).
+const CODE_SECRET := "MiniFire::gems::7f3a9c2e51b8d046"
+const CODE_ALPHABET := "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+func _code_gems(code: String) -> int:
+	# format: MF-<payload>-<checksum>-<gems>
+	var parts := code.split("-")
+	if parts.size() != 4 or parts[0] != "MF":
+		return 0
+	var payload := parts[1]
+	var checksum := parts[2]
+	if not _checksum_ok(payload, checksum):
+		return 0
+	var gems := int(parts[3])
+	if gems <= 0 or gems > 100000:
+		return 0
+	return gems
+
+func _checksum_ok(payload: String, checksum: String) -> bool:
+	var crypto := Crypto.new()
+	var key := CODE_SECRET.to_utf8_buffer()
+	var mac := crypto.hmac_digest(HashingContext.HASH_SHA256, key, payload.to_utf8_buffer())
+	var want := ""
+	for i in 5:
+		var byte := int(mac[i])
+		want += CODE_ALPHABET[(byte >> 3) & 31] if i % 2 == 0 else CODE_ALPHABET[byte & 31]
+	return want == checksum
+
 # ---------------------------------------------------------------- rewards
 ## stats: {kills, deaths, won(bool), vs_bots_only(bool)}. Returns {mfc, gems}.
 func grant_match_rewards(kills: int, deaths: int, won: bool, bots_only: bool) -> Dictionary:
@@ -174,13 +239,17 @@ func lobby_info() -> Dictionary:
 	var skins := {}
 	for w in Catalog.WEAPONS.keys():
 		skins[w] = skin_for(w)
+	var glvls := {}
+	for w in Catalog.WEAPON_ORDER:
+		glvls[w] = gun_level(w)
 	return {
 		"name": player_name.substr(0, 16),
 		"color": color_index,
 		"skins": skins,
 		"char": char_skin if owns_char(char_skin) else "trooper",
 		"powers": powers.duplicate(),
-		"team": 0,
+		"gun_levels": glvls,
+		"team": color_index,
 		"bot": false,
 	}
 
@@ -206,6 +275,10 @@ func save_profile() -> void:
 	cfg.set_value("c", "owned", owned_chars)
 	cfg.set_value("o", "bots", bot_level)
 	cfg.set_value("o", "controls", controls)
+	cfg.set_value("g", "levels", gun_levels)
+	cfg.set_value("g", "codes", redeemed_codes)
+	cfg.set_value("cl", "uid", cloud_uid)
+	cfg.set_value("cl", "email", cloud_email)
 	var err := cfg.save_encrypted_pass(SAVE_PATH, SAVE_KEY)
 	if err != OK:
 		push_warning("Profile save failed: %s" % error_string(err))
@@ -247,6 +320,15 @@ func load_profile() -> void:
 	bot_level = clampi(int(cfg.get_value("o", "bots", 1)), 0, Catalog.BOT_LEVELS.size() - 1)
 	var ct = cfg.get_value("o", "controls", {})
 	controls = ct if ct is Dictionary else {}
+	var gl = cfg.get_value("g", "levels", {})
+	gun_levels = gl if gl is Dictionary else {}
+	for w in Catalog.WEAPON_ORDER:
+		if not gun_levels.has(w):
+			gun_levels[w] = 1
+	var rc = cfg.get_value("g", "codes", [])
+	redeemed_codes = rc if rc is Array else []
+	cloud_uid = str(cfg.get_value("cl", "uid", ""))
+	cloud_email = str(cfg.get_value("cl", "email", ""))
 
 
 func use_touch_controls() -> bool:

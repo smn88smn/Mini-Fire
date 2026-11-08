@@ -12,6 +12,14 @@ var _tab := "skins"
 var _weapon := "smg"
 var _tab_row: HBoxContainer
 var _body: Control
+var _spin_weapon := "smg"
+var _spinning := false
+var _spin_reel: Label = null
+var _spin_result_label: Label = null
+var _spin_t := 0.0
+var _spin_prize: Dictionary = {}
+var _spin_last_result := ""
+var _code_edit: LineEdit = null
 
 
 func _ready() -> void:
@@ -70,11 +78,12 @@ func _refresh() -> void:
 	if not is_inside_tree():
 		return
 	UIKit.clear(_tab_row)
-	for pair in [["skins", "SKINS", "orange"], ["chars", "HEROES", "green"], ["powers", "POWERS", "purple"], ["gems", "GEMS", "blue"]]:
+	for pair in [["skins", "SKINS", "orange"], ["guns", "GUNS", "red"], ["chars", "HEROES", "green"],
+			["powers", "POWERS", "purple"], ["spin", "SPIN", "yellow"], ["gems", "GEMS", "blue"]]:
 		var id: String = pair[0]
 		var b := UIKit.glass_button(pair[1], pair[2] if id == _tab else "dark", func():
 			_tab = id
-			_refresh(), Vector2(130, 58), 22)
+			_refresh(), Vector2(108, 58), 20)
 		_tab_row.add_child(b)
 	UIKit.clear(_body)
 	match _tab:
@@ -84,6 +93,10 @@ func _refresh() -> void:
 			_body.add_child(_gems_page())
 		"chars":
 			_body.add_child(_chars_page())
+		"guns":
+			_body.add_child(_guns_page())
+		"spin":
+			_body.add_child(_spin_page())
 		_:
 			_body.add_child(_skins_page())
 
@@ -332,6 +345,204 @@ func _buy_power(pid: String) -> void:
 		UIKit.toast(self, "Not enough currency", UIKit.BAD)
 
 
+# ================================================================ guns (weapon levels)
+func _guns_page() -> Control:
+	var scroll := UIKit.DragScroll.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 14)
+	grid.add_theme_constant_override("v_separation", 14)
+	scroll.add_child(grid)
+	for wid in Catalog.WEAPON_ORDER:
+		grid.add_child(_gun_level_card(wid))
+	return scroll
+
+func _gun_level_card(wid: String) -> Control:
+	var w: Dictionary = Catalog.weapon(wid)
+	var lvl := Profile.gun_level(wid)
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UIKit.card_style("legend" if lvl >= Catalog.GUN_LEVEL_MAX else "rare"))
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	card.add_child(h)
+	var prev := Widgets.GunPreview.new()
+	prev.weapon_id = wid
+	prev.skin_id = Profile.skin_for(wid)
+	prev.padding = 0.05
+	prev.custom_minimum_size = Vector2(150, 70)
+	h.add_child(prev)
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 3)
+	h.add_child(v)
+	v.add_child(UIKit.label(str(w["name"]).to_upper(), 22, UIKit.TEXT))
+	# level pips
+	var pips := HBoxContainer.new()
+	pips.add_theme_constant_override("separation", 5)
+	for i in Catalog.GUN_LEVEL_MAX:
+		var pip := Panel.new()
+		pip.custom_minimum_size = Vector2(30, 11)
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(5)
+		sb.bg_color = (UIKit.BAD if i == Catalog.GUN_LEVEL_MAX - 1 else UIKit.ACCENT2) if i < lvl else Color(1, 1, 1, 0.15)
+		pip.add_theme_stylebox_override("panel", sb)
+		pips.add_child(pip)
+	pips.add_child(UIKit.label("LV %d/%d" % [lvl, Catalog.GUN_LEVEL_MAX], 15, UIKit.ACCENT2))
+	v.add_child(pips)
+	var dmg_now := Catalog.gun_level_damage(wid, lvl)
+	var line := "Damage %d" % dmg_now
+	if lvl < Catalog.GUN_LEVEL_MAX:
+		line += "  ->  %d at LV%d" % [Catalog.gun_level_damage(wid, lvl + 1), lvl + 1]
+	else:
+		line += "  |  FIRE BULLETS: burn %d HP/s for %ds" % [int(Catalog.BURN_DPS), int(Catalog.BURN_TIME)]
+	v.add_child(UIKit.label(line, 15, UIKit.MUTED))
+	v.add_child(UIKit.glass_button("SPIN TO LEVEL UP", "yellow", func():
+		_spin_weapon = wid
+		_tab = "spin"
+		_refresh(), Vector2(0, 46), 17))
+	return card
+
+# ================================================================ spin shop
+func _spin_page() -> Control:
+	var scroll := UIKit.DragScroll.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 12)
+	scroll.add_child(v)
+	# weapon selector
+	var sel := PanelContainer.new()
+	sel.add_theme_stylebox_override("panel", UIKit.glass_panel())
+	v.add_child(sel)
+	var sv := VBoxContainer.new()
+	sel.add_child(sv)
+	sv.add_child(UIKit.label("LEVEL UP WHICH GUN?", 20, UIKit.ACCENT2))
+	var wrow := HBoxContainer.new()
+	wrow.add_theme_constant_override("separation", 8)
+	sv.add_child(wrow)
+	for wid in Catalog.WEAPON_ORDER:
+		var id := String(wid)
+		var b := UIKit.glass_button(str(Catalog.weapon(wid)["name"]), "orange" if id == _spin_weapon else "dark", func():
+			_spin_weapon = id
+			_refresh(), Vector2(0, 52), 16)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		wrow.add_child(b)
+	sv.add_child(UIKit.label("Selected: %s  LV %d/%d" % [Catalog.weapon(_spin_weapon)["name"], Profile.gun_level(_spin_weapon), Catalog.GUN_LEVEL_MAX], 16, UIKit.MUTED))
+	# reel
+	var reel_panel := PanelContainer.new()
+	reel_panel.add_theme_stylebox_override("panel", UIKit.card_style("legend"))
+	reel_panel.custom_minimum_size = Vector2(0, 190)
+	v.add_child(reel_panel)
+	var rv := VBoxContainer.new()
+	rv.alignment = BoxContainer.ALIGNMENT_CENTER
+	rv.add_theme_constant_override("separation", 8)
+	reel_panel.add_child(rv)
+	_spin_reel = UIKit.label("SPIN THE WHEEL", 40, UIKit.ACCENT2, HORIZONTAL_ALIGNMENT_CENTER)
+	rv.add_child(_spin_reel)
+	_spin_result_label = UIKit.label(_spin_last_result, 18, UIKit.GOOD, HORIZONTAL_ALIGNMENT_CENTER)
+	rv.add_child(_spin_result_label)
+	# buttons
+	var brow := HBoxContainer.new()
+	brow.add_theme_constant_override("separation", 14)
+	v.add_child(brow)
+	var b1 := UIKit.glass_button("SPIN  %d MFC" % Catalog.SPIN_COST_MFC, "orange", func(): _do_spin("mfc"), Vector2(0, 74), 26)
+	b1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if not Profile.can_afford("mfc", Catalog.SPIN_COST_MFC):
+		b1.modulate = Color(1, 1, 1, 0.55)
+	brow.add_child(b1)
+	var b2 := UIKit.glass_button("SPIN  %d GEMS" % Catalog.SPIN_COST_GEM, "purple", func(): _do_spin("gem"), Vector2(0, 74), 26)
+	b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if not Profile.can_afford("gem", Catalog.SPIN_COST_GEM):
+		b2.modulate = Color(1, 1, 1, 0.55)
+	brow.add_child(b2)
+	# prize list
+	v.add_child(UIKit.label("POSSIBLE PRIZES", 18, UIKit.ACCENT2))
+	var total_w := 0
+	for pr in Catalog.SPIN_PRIZES:
+		total_w += int(pr[0])
+	for pr in Catalog.SPIN_PRIZES:
+		v.add_child(UIKit.label("  %d%%   %s" % [int(round(100.0 * int(pr[0]) / total_w)), _prize_text(pr)], 16, UIKit.MUTED))
+	return scroll
+
+func _prize_text(pr: Dictionary) -> String:
+	match str(pr[1]):
+		"mfc":
+			return "+%d MFC" % int(pr[2])
+		"gems":
+			return "+%d Gems" % int(pr[2])
+		"gunlvl":
+			return "%s +1 Level" % str(Catalog.weapon(_spin_weapon)["name"])
+		"gunlvl2":
+			return "%s +2 Levels" % str(Catalog.weapon(_spin_weapon)["name"])
+	return "?"
+
+func _do_spin(currency: String) -> void:
+	if _spinning:
+		return
+	var cost := Catalog.SPIN_COST_MFC if currency == "mfc" else Catalog.SPIN_COST_GEM
+	if not Profile.can_afford(currency, cost):
+		UIKit.toast(self, "Not enough currency", UIKit.BAD)
+		return
+	# pick the weighted prize up front
+	var total := 0
+	for pr in Catalog.SPIN_PRIZES:
+		total += int(pr[0])
+	var roll := randi() % total
+	var prize: Dictionary = Catalog.SPIN_PRIZES[Catalog.SPIN_PRIZES.size() - 1]
+	for pr in Catalog.SPIN_PRIZES:
+		roll -= int(pr[0])
+		if roll < 0:
+			prize = pr
+			break
+	# pay now, spin animation, grant when it stops
+	if currency == "mfc":
+		Profile.mfc -= cost
+	else:
+		Profile.gems -= cost
+	Profile.save_profile()
+	Profile.wallet_changed.emit()
+	_spin_prize = prize
+	_spin_last_result = ""
+	_spinning = true
+	_spin_t = 0.0
+	if _spin_result_label and is_instance_valid(_spin_result_label):
+		_spin_result_label.text = ""
+	Sfx.play("ui", 0.8, 0.0)
+
+func _process(delta: float) -> void:
+	if not _spinning:
+		return
+	_spin_t += delta
+	if _spin_t < 1.8:
+		# reel animation: cycle random prize names
+		if _spin_reel and is_instance_valid(_spin_reel) and fmod(_spin_t, 0.09) < delta:
+			var r: Dictionary = Catalog.SPIN_PRIZES[randi() % Catalog.SPIN_PRIZES.size()]
+			_spin_reel.text = _prize_text(r)
+			Sfx.play("ui", 0.3, 0.0)
+	else:
+		_spinning = false
+		_grant_spin_prize()
+
+func _grant_spin_prize() -> void:
+	var pr: Dictionary = _spin_prize
+	var txt := _prize_text(pr)
+	match str(pr[1]):
+		"mfc":
+			Profile.add_currency(int(pr[2]), 0)
+		"gems":
+			Profile.add_currency(0, int(pr[2]))
+		"gunlvl":
+			Profile.add_gun_levels(_spin_weapon, int(pr[2]))
+		"gunlvl2":
+			Profile.add_gun_levels(_spin_weapon, int(pr[2]))
+	_spin_last_result = "YOU WON:  " + txt
+	Sfx.play("buy", 0.9, 0.0)
+	UIKit.toast(self, "You won " + txt, UIKit.GOOD)
+	_refresh()
+
 # ================================================================ gems
 func _gems_page() -> Control:
 	var scroll := UIKit.DragScroll.new()
@@ -360,7 +571,60 @@ func _gems_page() -> Control:
 			row.add_child(_gem_card("PACK", str(pack["gems"]), "BUY", "purple", func(): Monetization.buy_gem_pack(pid)))
 		else:
 			row.add_child(_gem_card("PACK", str(pack["gems"]), "SOON", "disabled", func(): pass))
+	# Telegram shop: buy gems from the game's Telegram store
+	var tg := PanelContainer.new()
+	tg.add_theme_stylebox_override("panel", UIKit.card_style("legend"))
+	tg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var tgv := VBoxContainer.new()
+	tgv.add_theme_constant_override("separation", 6)
+	tg.add_child(tgv)
+	tgv.add_child(UIKit.label("BUY GEMS ON TELEGRAM", 22, UIKit.ACCENT2))
+	tgv.add_child(UIKit.label("Open our Telegram shop, pay, and you get a gift code to redeem here.", 16, UIKit.MUTED))
+	var tgrow := HBoxContainer.new()
+	tgrow.add_theme_constant_override("separation", 10)
+	tgv.add_child(tgrow)
+	var openb := UIKit.glass_button("OPEN TELEGRAM SHOP", "blue", func(): OS.shell_open(Catalog.TELEGRAM_SHOP_URL), Vector2(0, 56), 20)
+	openb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tgrow.add_child(openb)
+	var redb := UIKit.glass_button("REDEEM CODE", "green", _show_redeem, Vector2(0, 56), 20)
+	redb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tgrow.add_child(redb)
+	v.add_child(tg)
 	return scroll
+
+func _show_redeem() -> void:
+	var dlg := PanelContainer.new()
+	dlg.add_theme_stylebox_override("panel", UIKit.glass_panel())
+	var dv := VBoxContainer.new()
+	dv.add_theme_constant_override("separation", 8)
+	dlg.add_child(dv)
+	dv.add_child(UIKit.label("REDEEM GIFT CODE", 22, UIKit.ACCENT2))
+	dv.add_child(UIKit.label("Paste the code you received on Telegram (like MF-XXXXXX-XXXXX-100).", 15, UIKit.MUTED))
+	_code_edit = LineEdit.new()
+	_code_edit.placeholder_text = "MF-..."
+	_code_edit.custom_minimum_size = Vector2(0, 54)
+	_code_edit.add_theme_font_size_override("font_size", 22)
+	dv.add_child(_code_edit)
+	var rrow := HBoxContainer.new()
+	rrow.add_theme_constant_override("separation", 10)
+	dv.add_child(rrow)
+	rrow.add_child(UIKit.glass_button("CANCEL", "dark", func(): dlg.queue_free(), Vector2(130, 54), 18))
+	rrow.add_child(UIKit.glass_button("REDEEM", "green", func(): _redeem(dlg), Vector2(0, 54), 22))
+	add_child(dlg)
+
+func _redeem(dlg: PanelContainer) -> void:
+	if _code_edit == null:
+		return
+	var res := Profile.redeem_code(_code_edit.text)
+	if res > 0:
+		Sfx.play("buy", 0.9, 0.0)
+		UIKit.toast(self, "+%d Gems added to your account" % res, UIKit.GOOD)
+		dlg.queue_free()
+		_refresh()
+	elif res == -2:
+		UIKit.toast(self, "This code was already used", UIKit.BAD)
+	else:
+		UIKit.toast(self, "Invalid code. Check it and try again.", UIKit.BAD)
 
 
 func _gem_card(tag: String, amount: String, action: String, color: String, cb: Callable) -> Control:

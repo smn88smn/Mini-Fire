@@ -16,8 +16,10 @@ var started := false
 var ended := false
 var time_left := 0.0
 var stats: Dictionary = {}       # id -> {"k": int, "d": int}
-var team_score: Array = [0, 0]
+## In Team Deathmatch the key is the color/team index (see Catalog.PLAYER_COLORS).
+var team_score: Dictionary = {}
 var bullets: Array = []          # Array[Dictionary]
+var _burn: Dictionary = {}       # host: pid -> {"t": sec left, "by": attacker, "tick": sec}
 
 var _bullet_seq := 0
 var _last_fire: Dictionary = {}  # host: "id:weapon" -> msec
@@ -430,6 +432,14 @@ class _Glow extends Node2D:
 		for b in fx.game.bullets:
 			var dir: Vector2 = (b["vel"] as Vector2).normalized()
 			var p: Vector2 = b["pos"]
+			if b.get("fire", false):
+				# incendiary tracer: flame tail behind the bullet
+				for i in 4:
+					var ft := p - dir * (10.0 + i * 9.0)
+					var fr := 7.0 - i * 1.3
+					draw_texture_rect(tex, Rect2(ft - Vector2(fr, fr), Vector2(fr, fr) * 2.0), false,
+						Color(1.0, 0.75 - i * 0.12, 0.15, 0.55 - i * 0.1))
+				continue
 			match str(b["w"]):
 				"rocket":
 					var fl := p - dir * 14.0
@@ -1129,7 +1139,14 @@ func _update_hud(delta: float) -> void:
 func _score_text() -> String:
 	var limit: int = Catalog.KILL_LIMITS[1 if is_tdm() else 0]
 	if is_tdm():
-		return "RED %d  -  %d BLUE    (first to %d)" % [team_score[0], team_score[1], limit]
+		var parts: Array = []
+		var teams := team_score.keys()
+		teams.sort()
+		for t in teams:
+			if int(team_score[t]) > 0:
+				parts.append("%s %d" % [Catalog.color_name(int(t)).to_upper(), int(team_score[t])])
+		var txt := "  |  ".join(parts) if parts.size() > 0 else "Pick teams by color"
+		return "%s    (first to %d)" % [txt, limit]
 	var rows := _score_rows()
 	var my_k := int(stats.get(multiplayer.get_unique_id(), {"k": 0})["k"])
 	if rows.is_empty():
@@ -1148,7 +1165,7 @@ func _score_rows() -> Array:
 		if not Network.players.has(id):
 			continue
 		var info: Dictionary = Network.players[id]
-		var col: Color = Catalog.TEAM_COLORS[int(info.get("team", 0))] if is_tdm() else Catalog.color_by_index(int(info.get("color", 0)))
+		var col: Color = Catalog.color_by_index(int(info.get("team", 0))) if is_tdm() else Catalog.color_by_index(int(info.get("color", 0)))
 		rows.append({"id": id, "name": str(info.get("name", "?")), "kills": int(stats[id]["k"]), "deaths": int(stats[id]["d"]),
 			"color": col, "me": int(id) == me, "team": int(info.get("team", 0))})
 	rows.sort_custom(func(a, b):
@@ -1204,6 +1221,10 @@ func _server_fire(id: int, weapon_id: String, origin: Vector2, angle: float) -> 
 func _spawn_bullets(id: int, weapon_id: String, origin: Vector2, angles: PackedFloat32Array, first: int) -> void:
 	var w := Catalog.weapon(weapon_id)
 	var p := get_player(id)
+	# level 6 guns shoot incendiary bullets (visual flag; damage/burn decided by host)
+	var ginfo: Dictionary = Network.players.get(id, {})
+	var glv: Dictionary = ginfo.get("gun_levels", {})
+	var fire := glv is Dictionary and int(glv.get(weapon_id, 1)) >= Catalog.GUN_LEVEL_MAX
 	var ex: Array[RID] = []
 	if p:
 		ex.append(p.get_rid())
@@ -1218,7 +1239,8 @@ func _spawn_bullets(id: int, weapon_id: String, origin: Vector2, angles: PackedF
 					ex.append(o.get_rid())
 	for i in angles.size():
 		bullets.append({"id": first + i, "owner": id, "w": weapon_id, "pos": origin,
-			"vel": Vector2.from_angle(angles[i]) * float(w["speed"]), "life": float(w["life"]), "ex": ex})
+			"vel": Vector2.from_angle(angles[i]) * float(w["speed"]), "life": float(w["life"]), "ex": ex,
+			"fire": fire})
 	Sfx.play_at(str(w["sound"]), origin, listener_pos(), 0.9)
 
 
@@ -1267,7 +1289,15 @@ func _server_bullet_hit(b: Dictionary, collider: Object, pos: Vector2) -> void:
 		return
 	if collider is Player:
 		_all("_bullet_end", [int(b["id"]), pos, true])
-		_server_damage(collider, int(w["damage"]), int(b["owner"]), b["w"])
+		# gun level: more damage per level (level 6 = fire bullets)
+		var ginfo: Dictionary = Network.players.get(int(b["owner"]), {})
+		var glv: Dictionary = ginfo.get("gun_levels", {})
+		var lvl := 1
+		if glv is Dictionary:
+			lvl = int(glv.get(b["w"], 1))
+		var dmg := Catalog.gun_level_damage(b["w"], lvl)
+		if _server_damage(collider, dmg, int(b["owner"]), b["w"]) and lvl >= Catalog.GUN_LEVEL_MAX:
+			_server_burn(collider, int(b["owner"]))
 	else:
 		_all("_bullet_end", [int(b["id"]), pos, false])
 
@@ -1309,20 +1339,25 @@ func _explosion(pos: Vector2, radius: float) -> void:
 
 
 # ================================================================ damage / death (host)
-func _server_damage(victim: Player, amount: int, attacker_id: int, weapon_id: String) -> void:
+func _server_damage(victim: Player, amount: int, attacker_id: int, weapon_id: String) -> bool:
+	## Returns true when the damage was actually applied.
 	if victim == null or not victim.alive or victim.protect > 0.0 or ended or amount <= 0:
-		return
+		return false
 	if attacker_id != victim.peer_id:
 		var a := get_player(attacker_id)
-		if a and not a.is_enemy_of(victim):
-			return
-		if a and a.is_bot:
+		if a == null or not is_instance_valid(a):
+			# attacker left the game mid-burn: damage still applies
+			pass
+		elif not a.is_enemy_of(victim):
+			return false
+		elif a.is_bot:
 			amount = maxi(1, int(round(amount * float(a._lvl.get("dmg", 1.0)))))
 	victim.hp -= amount
 	if victim.hp <= 0:
 		_server_kill(victim, attacker_id, weapon_id)
 	else:
 		_all("_net_hp", [victim.peer_id, victim.hp, attacker_id])
+	return true
 
 
 func _server_kill(victim: Player, killer_id: int, weapon_id: String) -> void:
@@ -1335,7 +1370,7 @@ func _server_kill(victim: Player, killer_id: int, weapon_id: String) -> void:
 		stats[killer_id]["k"] += 1
 		var k := get_player(killer_id)
 		if k and is_tdm():
-			team_score[k.team] += 1
+			team_score[k.team] = int(team_score.get(k.team, 0)) + 1
 	_respawn_q[vid] = Catalog.RESPAWN_TIME
 	if weapon_id != "fall":
 		_server_drop(victim.current_weapon(), victim.global_position)
@@ -1361,9 +1396,9 @@ func _net_hp(id: int, hp: int, attacker_id: int) -> void:
 
 
 @rpc("authority", "call_local", "reliable")
-func _net_death(vid: int, killer_id: int, weapon_id: String, s: Dictionary, ts: Array) -> void:
+func _net_death(vid: int, killer_id: int, weapon_id: String, s: Dictionary, ts) -> void:
 	stats = s
-	team_score = ts
+	team_score = ts if ts is Dictionary else {}
 	var v := get_player(vid)
 	var k := get_player(killer_id)
 	if v:
@@ -1376,6 +1411,8 @@ func _net_death(vid: int, killer_id: int, weapon_id: String, s: Dictionary, ts: 
 	var text := ""
 	if weapon_id == "fall":
 		text = "%s fell" % vname
+	elif weapon_id == "burn":
+		text = "%s burned %s" % [kname, vname] if killer_id != vid else "%s burned to death" % vname
 	elif killer_id == vid:
 		text = "%s blew themselves up" % vname
 	else:
@@ -1409,6 +1446,7 @@ func _server_tick(delta: float) -> void:
 				_all("_net_respawn", [int(id), _pick_spawn(p)])
 	_server_pickups(delta)
 	_server_ground_tick(delta)
+	_server_burn_tick(delta)
 	# fell out of the map
 	var limit_y: float = map["size"].y + 150.0
 	for p in get_players():
@@ -1450,13 +1488,50 @@ func _pick_spawn(p: Player) -> Vector2:
 	return best + Vector2(randf_range(-20, 20), 0)
 
 
+# ================================================================ burn (level 6 fire bullets)
+## Host-authoritative: the victim takes BURN_DPS per second for BURN_TIME seconds.
+func _server_burn(victim: Player, attacker_id: int) -> void:
+	if victim == null or not victim.alive or ended:
+		return
+	var b: Dictionary = _burn.get(victim.peer_id, {})
+	if b.is_empty():
+		b = {"t": 0.0, "by": attacker_id, "tick": Catalog.BURN_TICK}
+	b["t"] = Catalog.BURN_TIME
+	b["by"] = attacker_id
+	_burn[victim.peer_id] = b
+	_all("_net_burn", [victim.peer_id, Catalog.BURN_TIME])
+
+@rpc("authority", "call_local", "reliable")
+func _net_burn(pid: int, dur: float) -> void:
+	var p := get_player(pid)
+	if p:
+		p.apply_burn_fx(dur)
+
+func _server_burn_tick(delta: float) -> void:
+	for pid in _burn.keys():
+		var b: Dictionary = _burn[pid]
+		b["t"] -= delta
+		b["tick"] -= delta
+		if b["tick"] <= 0.0:
+			b["tick"] += Catalog.BURN_TICK
+			var p := get_player(int(pid))
+			if p and p.alive:
+				var dmg := int(round(Catalog.BURN_DPS * Catalog.BURN_TICK))
+				if not _server_damage(p, dmg, int(b["by"]), "burn"):
+					_burn.erase(pid)
+					continue
+		if b["t"] <= 0.0:
+			_burn.erase(pid)
+
 # ================================================================ end of match
 func _check_win() -> void:
 	if ended:
 		return
 	if is_tdm():
-		if team_score[0] >= Catalog.KILL_LIMITS[1] or team_score[1] >= Catalog.KILL_LIMITS[1]:
-			_server_end_match()
+		for t in team_score:
+			if int(team_score[t]) >= Catalog.KILL_LIMITS[1]:
+				_server_end_match()
+				return
 	else:
 		for id in stats:
 			if int(stats[id]["k"]) >= Catalog.KILL_LIMITS[0]:
@@ -1470,10 +1545,14 @@ func _server_end_match() -> void:
 	var winner_id := 0
 	var winner_team := -1
 	if is_tdm():
-		if team_score[0] > team_score[1]:
-			winner_team = 0
-		elif team_score[1] > team_score[0]:
-			winner_team = 1
+		var best := -1
+		for t in team_score:
+			var sc := int(team_score[t])
+			if sc > best:
+				best = sc
+				winner_team = int(t)
+			elif sc == best:
+				winner_team = -1  # tie
 	else:
 		var rows := _score_rows()
 		if rows.size() > 0:
@@ -1485,11 +1564,12 @@ func _server_end_match() -> void:
 
 
 @rpc("authority", "call_local", "reliable")
-func _end_match(s: Dictionary, ts: Array, winner_id: int, winner_team: int) -> void:
+func _end_match(s: Dictionary, ts, winner_id: int, winner_team: int) -> void:
 	ended = true
 	stats = s
-	team_score = ts
+	team_score = ts if ts is Dictionary else {}
 	bullets.clear()
+	_burn.clear()
 	var me := multiplayer.get_unique_id()
 	var my_team := int(Network.players.get(me, {}).get("team", 0))
 	var won := false
@@ -1498,7 +1578,7 @@ func _end_match(s: Dictionary, ts: Array, winner_id: int, winner_team: int) -> v
 	if is_tdm():
 		if winner_team >= 0:
 			won = winner_team == my_team
-			title = "%s TEAM WINS" % Catalog.TEAM_NAMES[winner_team].to_upper()
+			title = "%s TEAM WINS" % Catalog.color_name(winner_team).to_upper()
 			tcol = UIKit.GOOD if won else UIKit.BAD
 	elif winner_id != 0:
 		won = winner_id == me
@@ -1518,6 +1598,7 @@ func _on_player_left(id: int) -> void:
 		p.queue_free()
 	stats.erase(id)
 	_respawn_q.erase(id)
+	_burn.erase(id)
 	for i in range(bullets.size() - 1, -1, -1):
 		if int(bullets[i]["owner"]) == id:
 			bullets.remove_at(i)

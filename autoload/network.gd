@@ -8,6 +8,8 @@ signal hosts_updated(hosts: Array)
 signal connection_failed(reason: String)
 signal joined_lobby
 signal player_left(id: int)
+signal online_room_ready(code: String)
+signal online_room_failed(reason: String)
 
 const PORT := 7777
 const DISCOVERY_PORT := 7778
@@ -20,9 +22,12 @@ var players: Dictionary = {}  # id(int) -> info Dictionary
 var settings: Dictionary = {"mode": Catalog.MODE_FFA, "map": 0, "time": 1, "bots": 1}
 var in_match := false
 var offline := false
+var online := false          # true while hosting/joining an internet room by code
+var room_code := ""          # host: the share code of the online room
 var last_message := ""  # shown by the main menu after a disconnect
 
 var _peer: MultiplayerPeer = null
+var _ip_req: HTTPRequest = null
 var _loaded: Dictionary = {}
 var _next_bot_id := -1
 
@@ -109,10 +114,111 @@ func join(ip: String) -> Error:
 	Profile.save_profile()
 	return OK
 
+# ================================================================ online rooms (by code)
+## Host a room that friends anywhere on the internet can join with a short code.
+## Opens the UDP port via UPnP and encodes the public IP + port into the code.
+func host_online() -> void:
+	var err := host_lan()
+	if err != OK:
+		online_room_failed.emit("Could not host (port %d busy?)" % PORT)
+		return
+	online = true
+	_setup_online_room()
+
+func _setup_online_room() -> void:
+	# 1) try UPnP: open the port and read the external IP
+	var ext := ""
+	var upnp := UPNP.new()
+	if upnp.discover() == OK:
+		upnp.add_port_mapping(PORT, PORT, "MiniFire", "UDP")
+		ext = str(upnp.query_external_address())
+	if ext.is_valid_ip_address() and not ext.begins_with("0."):
+		_finish_online_room(ext)
+		return
+	# 2) fallback: ask an external service for the public IP
+	_ip_req = HTTPRequest.new()
+	_ip_req.timeout = 8.0
+	_ip_req.request_completed.connect(_on_ip_fetched)
+	add_child(_ip_req)
+	var err := _ip_req.request("https://api.ipify.org")
+	if err != OK:
+		online_room_failed.emit("Could not detect your public IP (no internet?)")
+
+func _on_ip_fetched(_result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if response_code == 200:
+		var ip := body.get_string_from_utf8().strip_edges()
+		if ip.is_valid_ip_address():
+			_finish_online_room(ip)
+			return
+	online_room_failed.emit("Could not detect your public IP (no internet?)")
+
+func _finish_online_room(ip: String) -> void:
+	room_code = encode_room_code(ip, PORT)
+	online_room_ready.emit(room_code)
+
+## Join an online room from its share code (XXXXX-XXXXX).
+func join_by_code(code: String) -> Error:
+	var decoded := decode_room_code(code)
+	if decoded.is_empty():
+		return ERR_INVALID_PARAMETER
+	var err := join(decoded)
+	if err == OK:
+		online = true
+	return err
+
+const ROOM_ALPHABET := "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+## Public IP (4 bytes) + port (2 bytes) -> 10 Crockford-base32 chars.
+func encode_room_code(ip: String, port: int) -> String:
+	var parts := ip.split(".")
+	if parts.size() != 4:
+		return ""
+	var n := 0
+	for i in 4:
+		var b := int(parts[i])
+		if b < 0 or b > 255:
+			return ""
+		n = (n << 8) | b
+	n = (n << 16) | (port & 0xFFFF)
+	var out := ""
+	for i in 10:
+		out = ROOM_ALPHABET[n % 32] + out
+		n >>= 5
+	return out.substr(0, 5) + "-" + out.substr(5)
+
+## Inverse of encode_room_code. Returns the IP, or "" when the code is invalid.
+func decode_room_code(code: String) -> String:
+	var clean := code.strip_edges().to_upper().replace("-", "").replace(" ", "")
+	if clean.length() != 10:
+		return ""
+	var n := 0
+	for c in clean:
+		# Crockford-style confusion fixes
+		var ch := c
+		if c == "I" or c == "L":
+			ch = "1"
+		elif c == "O":
+			ch = "0"
+		elif c == "U":
+			ch = "V"
+		var idx := ROOM_ALPHABET.find(ch)
+		if idx < 0:
+			return ""
+		n = (n << 5) | idx
+	var port := n & 0xFFFF
+	n >>= 16
+	var ip := "%d.%d.%d.%d" % [n >> 24 & 255, n >> 16 & 255, n >> 8 & 255, n & 255]
+	if port != PORT:
+		return ""
+	return ip
+
 
 ## Leaves the current session. go_menu=true returns to the main menu.
 func leave(go_menu: bool = true) -> void:
 	_stop_broadcast()
+	if _ip_req:
+		_ip_req.queue_free()
+		_ip_req = null
 	if _peer != null:
 		_peer.close()
 	_peer = null
@@ -121,6 +227,8 @@ func leave(go_menu: bool = true) -> void:
 	_loaded.clear()
 	in_match = false
 	offline = false
+	online = false
+	room_code = ""
 	if go_menu:
 		get_tree().change_scene_to_file(MENU_SCENE)
 
@@ -191,9 +299,7 @@ func _register(info: Dictionary, version: int) -> void:
 			if _peer is ENetMultiplayerPeer:
 				(_peer as ENetMultiplayerPeer).disconnect_peer(id))
 		return
-	var clean := _sanitize(info)
-	clean["team"] = _smallest_team()
-	players[id] = clean
+	players[id] = _sanitize(info)
 	_broadcast_lobby()
 
 
@@ -240,22 +346,26 @@ func _sanitize(info: Dictionary) -> Dictionary:
 	if p_in is Dictionary:
 		for k in Catalog.POWERS.keys():
 			powers[k] = clampi(int(p_in.get(k, 0)), 0, Catalog.POWER_MAX)
+	var glvls := {}
+	var g_in = info.get("gun_levels", {})
+	if g_in is Dictionary:
+		for k in Catalog.WEAPON_ORDER:
+			glvls[k] = clampi(int(g_in.get(k, 1)), 1, Catalog.GUN_LEVEL_MAX)
+	else:
+		for k in Catalog.WEAPON_ORDER:
+			glvls[k] = 1
+	var color := clampi(int(info.get("color", 0)), 0, Catalog.PLAYER_COLORS.size() - 1)
 	return {
 		"powers": powers,
 		"name": name_str,
-		"color": clampi(int(info.get("color", 0)), 0, Catalog.PLAYER_COLORS.size() - 1),
+		"color": color,
 		"char": ch,
 		"skins": skins,
-		"team": clampi(int(info.get("team", 0)), 0, 1),
+		"gun_levels": glvls,
+		# In Team Deathmatch the color IS the team (see Catalog.PLAYER_COLORS).
+		"team": clampi(int(info.get("team", color)), 0, Catalog.PLAYER_COLORS.size() - 1),
 		"bot": false,
 	}
-
-
-func _smallest_team() -> int:
-	var c := [0, 0]
-	for id in players:
-		c[int(players[id].get("team", 0))] += 1
-	return 0 if c[0] <= c[1] else 1
 
 
 ## Called by any peer to change its own lobby info (color, team, weapon, skins, name).
@@ -278,7 +388,7 @@ func _apply_info(id: int, changes: Dictionary) -> void:
 	if not players.has(id):
 		return
 	var merged: Dictionary = players[id].duplicate(true)
-	for k in ["name", "color", "char", "skins", "powers", "team"]:
+	for k in ["name", "color", "char", "skins", "powers", "gun_levels", "team"]:
 		if changes.has(k):
 			merged[k] = changes[k]
 	var clean := _sanitize(merged)
@@ -310,12 +420,17 @@ func add_bot() -> void:
 	var skins := {}
 	for k in Catalog.WEAPONS.keys():
 		skins[k] = "default"
+	var glvls := {}
+	for k in Catalog.WEAPON_ORDER:
+		glvls[k] = 1
+	var col := randi() % Catalog.PLAYER_COLORS.size()
 	players[id] = {
 		"name": "BOT " + names[absi(id) % names.size()],
-		"color": randi() % Catalog.PLAYER_COLORS.size(),
+		"color": col,
 		"char": Catalog.CHAR_ORDER[randi() % Catalog.CHAR_ORDER.size()],
 		"skins": skins,
-		"team": _smallest_team(),
+		"gun_levels": glvls,
+		"team": col,
 		"bot": true,
 	}
 	_broadcast_lobby()
@@ -335,7 +450,8 @@ func remove_bot() -> void:
 
 func set_bot_team(id: int, team: int) -> void:
 	if multiplayer.is_server() and players.has(id) and players[id].get("bot", false):
-		players[id]["team"] = clampi(team, 0, 1)
+		players[id]["team"] = clampi(team, 0, Catalog.PLAYER_COLORS.size() - 1)
+		players[id]["color"] = players[id]["team"]
 		_broadcast_lobby()
 
 
