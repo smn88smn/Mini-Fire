@@ -3,18 +3,37 @@ name: Unity manual activation (one-time)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   activate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Create manual activation file
         run: |
-          docker run --rm -v "$PWD":/project unityci/editor:2022.3.76f1-android-3.2.2 \
-            bash -lc 'unity-editor -batchmode -quit -createManualActivationFile -projectPath /project -logFile /dev/stdout || true'
-          mv ManualActivationFile.alf Unity_v2022.3.76f1.alf 2>/dev/null || true
-          ls -la *.alf
+          rm -f *.alf activation.log
+          docker run --rm -v "$PWD":/project \
+            unityci/editor:2022.3.76f1-android-3.2.2 \
+            bash -c 'cd /project && unity-editor -batchmode -nographics -quit -createManualActivationFile -logFile /project/activation.log; echo "unity exit=$?"' || true
+          echo "--- activation.log tail ---"
+          tail -30 activation.log 2>/dev/null || echo "no log"
+          echo "--- dir ---"
+          ls -la
+          test -f *.alf
+
+      - name: Save activation log to ci-logs branch
+        if: always()
+        run: |
+          git config user.name "ci-bot" && git config user.email "ci-bot@users.noreply.github.com"
+          git checkout -B ci-logs
+          git add activation.log *.alf 2>/dev/null || true
+          git commit -m "activation attempt ${{ github.run_id }} (status: ${{ job.status }})" || true
+          git push origin HEAD:ci-logs --force
+
       - name: Upload activation file
         uses: actions/upload-artifact@v4
         with:
