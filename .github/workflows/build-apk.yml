@@ -3,130 +3,68 @@ name: Build Android APK
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
-
-env:
-  GODOT_VERSION: 4.4.1
-  GODOT_TAG: 4.4.1-stable
-  # Never let Gradle spawn a background daemon on CI - the daemon keeps the
-  # output pipe open and GitHub Actions waits forever (6h timeout hang).
-  GRADLE_OPTS: -Dorg.gradle.daemon=false
 
 jobs:
   build:
+    name: Build Mini Fire APK
     runs-on: ubuntu-latest
-    timeout-minutes: 100
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+      - name: Free disk
+        run: sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/.ghcup 2>/dev/null || true; df -h
 
-      - name: Download Godot and export templates
+      - name: Import Firebase / Google Sign-In packages
         run: |
-          cd /tmp
-          wget -q https://github.com/godotengine/godot/releases/download/${GODOT_TAG}/Godot_v${GODOT_TAG}_linux.x86_64.zip
-          wget -q https://github.com/godotengine/godot/releases/download/${GODOT_TAG}/Godot_v${GODOT_TAG}_export_templates.tpz
-          unzip -q Godot_v${GODOT_TAG}_linux.x86_64.zip
-          sudo mv Godot_v${GODOT_TAG}_linux.x86_64 /usr/local/bin/godot
-          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
-          unzip -q Godot_v${GODOT_TAG}_export_templates.tpz
-          mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+          mkdir -p /tmp/pkgs && cd /tmp/pkgs
+          # Firebase Unity SDK 12.10.1 (tgz packages, extracted straight into Packages/)
+          curl -fsSL -o auth.tgz   https://dl.google.com/games/registry/unity/com.google.firebase.auth/com.google.firebase.auth-12.10.1.tgz
+          curl -fsSL -o fire.tgz   https://dl.google.com/games/registry/unity/com.google.firebase.firestore/com.google.firebase.firestore-12.10.1.tgz
+          curl -fsSL -o app.tgz    https://dl.google.com/games/registry/unity/com.google.firebase.app/com.google.firebase.app-12.10.1.tgz
+          curl -fsSL -o edm.unitypackage https://github.com/googlesamples/unity-jar-resolver/raw/v1.2.190/external-dependency-manager-1.2.190.unitypackage
+          curl -fsSL -o signin.unitypackage https://github.com/googlesamples/google-signin-unity/releases/download/v1.0.4/google-signin-plugin-1.0.4.unitypackage
+          ls -la
 
-      - name: Configure Android SDK for Godot
+      - name: Prepare project packages
         run: |
-          mkdir -p ~/.config/godot
-          cat > ~/.config/godot/editor_settings-4.4.tres <<EOF
-          [gd_resource type="EditorSettings" format=3]
+          mkdir -p /tmp/pkgs/x
+          for p in app auth fire; do
+            n=$(tar -tzf /tmp/pkgs/$p.tgz | head -1 | cut -d/ -f1)
+            mkdir -p "/tmp/pkgs/x/$n"
+            tar -xzf /tmp/pkgs/$p.tgz -C "/tmp/pkgs/x/$n" --strip-components=1
+            echo "extracted $n"
+          done
+          ls /tmp/pkgs/x
 
-          [resource]
-          export/android/android_sdk_path = "${ANDROID_SDK_ROOT}"
-          export/android/java_sdk_path = "${JAVA_HOME}"
-          EOF
-          sed -i 's/^ *//' ~/.config/godot/editor_settings-4.4.tres
-          cat ~/.config/godot/editor_settings-4.4.tres
-          ls "${ANDROID_SDK_ROOT}/build-tools"
-
-      - name: Import project
-        run: godot --headless --path . --import 2>&1 | tee import.log; ! grep -E "SCRIPT ERROR|Parse Error" import.log
-
-      - name: Smoke test (practice match vs bots)
-        run: |
-          chmod +x tests/run_tests.sh
-          tests/run_tests.sh practice 150 | tee test.log
-          grep -q "DONE practice" test.log
-          ! grep -E "SCRIPT ERROR" test.log
-
-      - name: Install Android build template (needed for the Gradle build)
-        run: |
-          godot --headless --path . --install-android-build-template
-          # Double safety: disable the Gradle daemon in the project too.
-          echo "org.gradle.daemon=false" >> android/build/gradle.properties
-
-      - name: Prepare signing key
+      - name: Build APK (Docker)
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > /tmp/release.keystore
-            echo "RELEASE_KEYSTORE=/tmp/release.keystore" >> "$GITHUB_ENV"
-            echo "RELEASE_KEYSTORE_USER=$KEYSTORE_ALIAS" >> "$GITHUB_ENV"
-            echo "RELEASE_KEYSTORE_PASS=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
-          else
-            echo "No KEYSTORE_BASE64 secret - generating a debug keystore (installable for testing)."
-            keytool -genkeypair -keystore /tmp/debug.keystore -storepass android -keypass android \
-              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Mini Fire Debug, OU=Dev, O=MiniFire, L=Tehran, C=IR"
-            echo "RELEASE_KEYSTORE=/tmp/debug.keystore" >> "$GITHUB_ENV"
-            echo "RELEASE_KEYSTORE_USER=androiddebugkey" >> "$GITHUB_ENV"
-            echo "RELEASE_KEYSTORE_PASS=android" >> "$GITHUB_ENV"
-          fi
+          docker run --rm \
+            -e UNITY_LICENSE \
+            -v "$PWD":/project -v /tmp/pkgs:/pkgs \
+            unityci/editor:2022.3.76f1-android-3.2.2 \
+            bash -lc '
+              set -e
+              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /dev/stdout -importPackage /pkgs/edm.unitypackage || true
+              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /dev/stdout -importPackage /pkgs/signin.unitypackage || true
+              cp -r /pkgs/x/* /project/Packages/
+              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /dev/stdout -executeMethod MiniFire.EditorTools.BuildScript.BuildAndroid
+              exit $?
+            '
+          test -f "$PWD/Builds/MiniFire.apk"
 
-      - name: Firebase check
-        run: |
-          if [ -f android/build/google-services.json ]; then
-            echo "google-services.json found - Google Sign-In and cloud saves will be included in this build."
-          else
-            echo "No google-services.json - building WITHOUT Firebase. Add it at android/build/google-services.json (Firebase console > Android app) to enable Google Sign-In and cloud saves."
-          fi
-
-      - name: Cache Gradle dependencies (speeds up every build after the first)
-        uses: actions/cache@v4
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-deps-v1
-          restore-keys: gradle-deps-
+          name: MiniFire-APK
+          path: Builds/MiniFire.apk
 
-      - name: Export release APK
-        env:
-          RELEASE_KEYSTORE: ${{ env.RELEASE_KEYSTORE }}
-        run: |
-          mkdir -p export
-          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$RELEASE_KEYSTORE"
-          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="$RELEASE_KEYSTORE_USER"
-          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$RELEASE_KEYSTORE_PASS"
-          # 60-minute cap: first build downloads ~2GB of deps on a slow runner.
-          timeout 60m godot --headless --path . --export-release "Android" export/MiniFire.apk 2>&1 | tee export.log
-          test -f export/MiniFire.apk
-          ls -la export
-          "${ANDROID_SDK_ROOT}"/build-tools/$(ls "${ANDROID_SDK_ROOT}/build-tools" | sort -V | tail -1)/apksigner verify --print-certs export/MiniFire.apk | head -3
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MiniFire-apk
-          path: export/MiniFire.apk
-
-      - name: Publish to GitHub Release
+      - name: Create Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Mini Fire build ${{ github.run_number }}
-          files: export/MiniFire.apk
+          files: Builds/MiniFire.apk

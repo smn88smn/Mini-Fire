@@ -1,0 +1,8 @@
+{
+  "name": "minifire-gem-bot",
+  "version": "1.0.0",
+  "description": "Mini Fire Telegram gem shop bot",
+  "main": "bot.js",
+  "scripts": { "start": "node bot.js" },
+  "engines": { "node": ">=18" }
+}

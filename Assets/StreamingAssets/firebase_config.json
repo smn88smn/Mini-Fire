@@ -1,0 +1,7 @@
+{
+  "_comment": "Mini Fire Firebase config — fill these from Firebase Console (see docs/FIREBASE_SETUP.md). Without them the game runs fine, Google sign-in and cloud sync are just disabled.",
+  "api_key": "",
+  "project_id": "",
+  "app_id": "",
+  "web_client_id": ""
+}

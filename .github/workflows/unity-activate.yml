@@ -1,0 +1,22 @@
+name: Unity manual activation (one-time)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Create manual activation file
+        run: |
+          docker run --rm -v "$PWD":/project unityci/editor:2022.3.76f1-android-3.2.2 \
+            bash -lc 'unity-editor -batchmode -quit -createManualActivationFile -projectPath /project -logFile /dev/stdout || true'
+          mv ManualActivationFile.alf Unity_v2022.3.76f1.alf 2>/dev/null || true
+          ls -la *.alf
+      - name: Upload activation file
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unity-activation-request
+          path: Unity_v2022.3.76f1.alf
