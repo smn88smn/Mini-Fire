@@ -6,6 +6,9 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Mini Fire APK
@@ -17,10 +20,19 @@ jobs:
       - name: Free disk
         run: sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/.ghcup 2>/dev/null || true; df -h
 
+      - name: Check Unity license
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "WARNING: UNITY_LICENSE secret is NOT set — the build will fail at Unity activation. Run the 'Unity manual activation' workflow once." | tee -a $GITHUB_STEP_SUMMARY
+          else
+            echo "UNITY_LICENSE set (length ${#UNITY_LICENSE})." | tee -a $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Import Firebase / Google Sign-In packages
         run: |
           mkdir -p /tmp/pkgs && cd /tmp/pkgs
-          # Firebase Unity SDK 12.10.1 (tgz packages, extracted straight into Packages/)
           curl -fsSL -o auth.tgz   https://dl.google.com/games/registry/unity/com.google.firebase.auth/com.google.firebase.auth-12.10.1.tgz
           curl -fsSL -o fire.tgz   https://dl.google.com/games/registry/unity/com.google.firebase.firestore/com.google.firebase.firestore-12.10.1.tgz
           curl -fsSL -o app.tgz    https://dl.google.com/games/registry/unity/com.google.firebase.app/com.google.firebase.app-12.10.1.tgz
@@ -43,28 +55,38 @@ jobs:
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         run: |
+          rm -f unity-*.log
           docker run --rm \
             -e UNITY_LICENSE \
             -v "$PWD":/project -v /tmp/pkgs:/pkgs \
             unityci/editor:2022.3.76f1-android-3.2.2 \
             bash -lc '
-              set -e
-              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /dev/stdout -importPackage /pkgs/edm.unitypackage || true
-              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /dev/stdout -importPackage /pkgs/signin.unitypackage || true
+              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /project/unity-import1.log -importPackage /pkgs/edm.unitypackage || true
+              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /project/unity-import2.log -importPackage /pkgs/signin.unitypackage || true
               cp -r /pkgs/x/* /project/Packages/
-              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /dev/stdout -executeMethod MiniFire.EditorTools.BuildScript.BuildAndroid
-              exit $?
-            '
-          test -f "$PWD/Builds/MiniFire.apk"
+              unity-editor -batchmode -nographics -quit -projectPath /project -logFile /project/unity-build.log -executeMethod MiniFire.EditorTools.BuildScript.BuildAndroid
+            ' || true
+          ls -la Builds/ 2>/dev/null || true
+          test -f Builds/MiniFire.apk
+
+      - name: Save build logs to ci-logs branch
+        if: always()
+        run: |
+          git config user.name "ci-bot" && git config user.email "ci-bot@users.noreply.github.com"
+          git checkout -B ci-logs
+          git add unity-*.log 2>/dev/null || true
+          git commit -m "CI logs for run ${{ github.run_id }} (conclusion: ${{ job.status }})" || true
+          git push origin HEAD:ci-logs --force
 
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: MiniFire-APK
           path: Builds/MiniFire.apk
 
       - name: Create Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && success()
         uses: softprops/action-gh-release@v2
         with:
           files: Builds/MiniFire.apk
