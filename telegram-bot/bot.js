@@ -14,8 +14,8 @@
 const https = require('https');
 const crypto = require('crypto');
 
-const BOT_TOKEN = process.env.BOT_TOKEN || 'PUT_YOUR_BOT_TOKEN_HERE';
-const ADMIN_ID = process.env.ADMIN_ID || '0'; // آیدی عددی ادمین (اختیاری، 0 = همه)
+const BOT_TOKEN = process.env.BOT_TOKEN || '9296962407:AAHjI5dQTBS8BUh-gnqG8rJMcb4eKABhzd0';
+const ADMIN_ID = process.env.ADMIN_ID || '8330593178'; // آیدی عددی ادمین (اختیاری، 0 = همه)
 const CODE_SECRET = 'MiniFire::gems::7f3a9c2e51b8d046';
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
