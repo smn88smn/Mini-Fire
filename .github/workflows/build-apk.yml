@@ -8,10 +8,14 @@ on:
 env:
   GODOT_VERSION: 4.4.1
   GODOT_TAG: 4.4.1-stable
+  # Never let Gradle spawn a background daemon on CI - the daemon keeps the
+  # output pipe open and GitHub Actions waits forever (6h timeout hang).
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
     steps:
@@ -58,7 +62,10 @@ jobs:
           ! grep -E "SCRIPT ERROR" test.log
 
       - name: Install Android build template (needed for the Gradle build)
-        run: godot --headless --path . --install-android-build-template
+        run: |
+          godot --headless --path . --install-android-build-template
+          # Double safety: disable the Gradle daemon in the project too.
+          echo "org.gradle.daemon=false" >> android/build/gradle.properties
 
       - name: Prepare signing key
         env:
@@ -97,7 +104,8 @@ jobs:
           export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$RELEASE_KEYSTORE"
           export GODOT_ANDROID_KEYSTORE_RELEASE_USER="$RELEASE_KEYSTORE_USER"
           export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$RELEASE_KEYSTORE_PASS"
-          godot --headless --path . --export-release "Android" export/MiniFire.apk 2>&1 | tee export.log
+          # Hard 25-minute cap so a stuck build fails with logs instead of hanging 6h.
+          timeout 25m godot --headless --path . --export-release "Android" export/MiniFire.apk 2>&1 | tee export.log
           test -f export/MiniFire.apk
           ls -la export
           "${ANDROID_SDK_ROOT}"/build-tools/$(ls "${ANDROID_SDK_ROOT}/build-tools" | sort -V | tail -1)/apksigner verify --print-certs export/MiniFire.apk | head -3
