@@ -18,6 +18,7 @@ namespace MiniFire.EditorTools
 
         public static void BuildAndroid()
         {
+            ApplyLocalToolchains(); // env-var overrides for non-Hub installs (local builds)
             EnsureScene();
             ApplySettings();
             bool ok = RunBuild();
@@ -83,6 +84,19 @@ namespace MiniFire.EditorTools
                 Debug.Log("FIREBASE_SDK define enabled");
             }
             Debug.Log("Firebase SDK detected: " + hasFirebase);
+        }
+
+        /// <summary>If MF_ANDROID_SDK / MF_ANDROID_NDK / MF_JDK env vars are set, point the editor at them
+        /// (used for local tarball installs where Hub's default paths don't exist).</summary>
+        static void ApplyLocalToolchains()
+        {
+            string sdk = Environment.GetEnvironmentVariable("MF_ANDROID_SDK");
+            string ndk = Environment.GetEnvironmentVariable("MF_ANDROID_NDK");
+            string jdk = Environment.GetEnvironmentVariable("MF_JDK");
+            if (!string.IsNullOrEmpty(sdk)) EditorPrefs.SetString("AndroidSdkRoot", sdk);
+            if (!string.IsNullOrEmpty(ndk)) EditorPrefs.SetString("AndroidNdkRoot", ndk);
+            if (!string.IsNullOrEmpty(jdk)) EditorPrefs.SetString("JdkRoot", jdk);
+            Debug.Log($"toolchains: sdk={sdk} ndk={ndk} jdk={jdk}");
         }
 
         static bool RunBuild()
